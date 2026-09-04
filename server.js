@@ -8,6 +8,16 @@ const streamer = require('./src/streamer');
 const cfg = config.get();
 
 const app = express();
+
+app.use((req, res, next) => {
+  const start = Date.now();
+  console.log(`--> ${req.method} ${req.originalUrl}`);
+  res.on('finish', () => {
+    console.log(`<-- ${req.method} ${req.originalUrl} ${res.statusCode} (${Date.now() - start}ms)`);
+  });
+  next();
+});
+
 app.use(express.json());
 
 function asyncRoute(fn) {
@@ -210,6 +220,19 @@ app.use((err, req, res, next) => {
   res.status(err.status || 500).json({ error: err.message || 'Errore interno' });
 });
 
-app.listen(cfg.port, () => {
+const httpServer = app.listen(cfg.port, () => {
   console.log(`nuvio-offline in ascolto su http://localhost:${cfg.port}`);
+});
+
+// Se il parser HTTP di Node riceve una richiesta malformata (es. un URL con byte grezzi
+// non percent-encoded), la rifiuta PRIMA che arrivi alle route Express: senza questo
+// listener quel rifiuto è silenzioso (nessuna riga di log), il che rende impossibile
+// distinguere "la richiesta non è mai arrivata" da "il server l'ha processata e ha
+// risposto qualcos'altro". Logghiamo esplicitamente e rispondiamo 400 come farebbe
+// comunque Node di default.
+httpServer.on('clientError', (err, socket) => {
+  console.error(`CLIENT ERROR: richiesta malformata rifiutata prima di Express — ${err.message}`);
+  if (socket.writable) {
+    socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
+  }
 });
