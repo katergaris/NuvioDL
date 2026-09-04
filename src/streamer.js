@@ -113,7 +113,11 @@ function streamHls(sourceUrl, headers, filename, res) {
         .join('\r\n') + '\r\n';
       args.push('-headers', headerStr);
     }
-    args.push('-i', sourceUrl, '-c', 'copy', '-f', 'matroska', 'pipe:1');
+    args.push(
+      '-i', sourceUrl,
+      '-map', '0:v:0', '-map', '0:a:0?',
+      '-c', 'copy', '-f', 'matroska', 'pipe:1'
+    );
 
     let ff;
     try {
@@ -137,7 +141,9 @@ function streamHls(sourceUrl, headers, filename, res) {
     };
 
     const timeoutTimer = setTimeout(() => {
-      fail(504, `Timeout: nessun dato ricevuto dallo stream entro ${FIRST_BYTE_TIMEOUT_MS / 1000}s (sorgente lenta, irraggiungibile o che richiede autenticazione non gestita)`);
+      const tail = stderrTail.slice(-6).join(' ').slice(0, 300);
+      const suffix = tail ? ` — ultimo log ffmpeg: ${tail}` : ' (ffmpeg non ha ancora prodotto alcun log)';
+      fail(504, `Timeout: nessun dato ricevuto dallo stream entro ${FIRST_BYTE_TIMEOUT_MS / 1000}s (sorgente lenta, irraggiungibile o che richiede autenticazione non gestita)${suffix}`);
     }, FIRST_BYTE_TIMEOUT_MS);
 
     ff.on('error', err => {
