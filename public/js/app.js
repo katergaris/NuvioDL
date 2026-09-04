@@ -12,10 +12,11 @@ function $all(sel, root = document) { return [...root.querySelectorAll(sel)]; }
 function el(tag, attrs = {}, children = []) {
   const node = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
+    if (v === null || v === undefined || v === false) continue;
     if (k === 'class') node.className = v;
     else if (k === 'html') node.innerHTML = v;
     else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2), v);
-    else node.setAttribute(k, v);
+    else node.setAttribute(k, v === true ? '' : v);
   }
   for (const c of [].concat(children)) {
     if (c === null || c === undefined) continue;
@@ -23,6 +24,15 @@ function el(tag, attrs = {}, children = []) {
   }
   return node;
 }
+
+window.addEventListener('error', e => {
+  console.error(e.error || e.message);
+  toast(`Errore: ${e.message}`, true);
+});
+window.addEventListener('unhandledrejection', e => {
+  console.error(e.reason);
+  toast(`Errore: ${(e.reason && e.reason.message) || e.reason}`, true);
+});
 
 function toast(message, isError = false) {
   const t = $('#toast');
@@ -104,7 +114,7 @@ function renderResults(items) {
     return;
   }
   for (const item of items) {
-    const card = el('div', { class: 'card', onclick: () => openDetail(item) }, [
+    const card = el('div', { class: 'card', onclick: () => openDetail(item).catch(err => toast(err.message, true)) }, [
       item.posterUrl
         ? el('img', { src: item.posterUrl, alt: item.title })
         : el('div', { class: 'placeholder' }, item.title),
