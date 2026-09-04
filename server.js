@@ -103,6 +103,85 @@ app.get('/api/download', asyncRoute(async (req, res) => {
   await streamer.streamDownload(prepared, res);
 }));
 
+// ---- Stremio/Nuvio addon (nuvio-offline installata come addon dentro Nuvio) ----
+//
+// Espone questo stesso server come addon: quando Nuvio interroga /stream/:type/:id.json,
+// nuvio-offline ri-interroga gli addon "sorgente" configurati (stessa logica di
+// /api/streams), tiene solo gli stream scaricabili e li restituisce come voci con
+// `externalUrl` puntato a /api/download. Nuvio, per una entry con externalUrl invece di
+// url/infoHash, apre il link nel browser esterno anziché riprodurlo internamente: è lì
+// che parte il download diretto sul dispositivo.
+
+const ADDON_ID = 'org.nuvio-offline';
+
+function addonCors(req, res, next) {
+  res.header('Access-Control-Allow-Origin', '*');
+  next();
+}
+
+function parseStremioId(id) {
+  const [imdbId, season, episode] = id.split(':');
+  return { imdbId, season, episode };
+}
+
+app.get('/manifest.json', addonCors, (req, res) => {
+  res.json({
+    id: ADDON_ID,
+    version: '1.0.0',
+    name: 'Nuvio Offline',
+    description: 'Scarica sul dispositivo i contenuti trovati dagli addon configurati in nuvio-offline',
+    resources: ['stream'],
+    types: ['movie', 'series'],
+    idPrefixes: ['tt'],
+    catalogs: [],
+    behaviorHints: { configurable: false }
+  });
+});
+
+app.get('/stream/:type/:id.json', addonCors, asyncRoute(async (req, res) => {
+  const { type, id } = req.params;
+  if (type !== 'movie' && type !== 'series') return res.json({ streams: [] });
+
+  const addonList = config.listAddons();
+  if (!addonList.length) return res.json({ streams: [] });
+
+  const { streams } = await addons.getStreamsForAllAddons(addonList, type, id);
+  const downloadable = streams.filter(s => s.supported);
+  if (!downloadable.length) return res.json({ streams: [] });
+
+  const { imdbId, season, episode } = parseStremioId(id);
+  let label = id;
+  try {
+    const info = await addons.findByImdbId(imdbId, type, cfg.tmdbApiKey, cfg.language);
+    if (info && info.title) {
+      label = type === 'series'
+        ? `${info.title} S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`
+        : `${info.title}${info.year ? ` (${info.year})` : ''}`;
+    }
+  } catch {
+    // TMDB non configurata/raggiungibile: usa l'id grezzo come titolo del file
+  }
+
+  const base = `${req.protocol}://${req.get('host')}`;
+  const result = downloadable.map(s => {
+    const payload = {
+      addonName: s.addonName,
+      sourceUrl: s.url,
+      headers: s.headers,
+      streamTitle: s.title,
+      title: label
+    };
+    const downloadUrl = `${base}/api/download?data=${encodeURIComponent(JSON.stringify(payload))}`;
+    return {
+      name: '⬇️ Scarica offline',
+      title: `${s.title}\n${s.addonName}`,
+      externalUrl: downloadUrl
+    };
+  });
+
+  res.json({ streams: result });
+}));
+
 // ---- Static files ----
 
 app.use(express.static(path.join(__dirname, 'public')));

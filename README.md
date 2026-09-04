@@ -91,6 +91,26 @@ L'immagine (`node:22-alpine`) include `ffmpeg` via `apk`. Non servono volumi per
 scaricati (non vengono mai scritti su disco): il `docker-compose.yml` monta solo
 `config.json`, così configurazione e lista addon sopravvivono ai riavvii del container.
 
+## Installazione come addon dentro Nuvio
+
+Oltre alla sua web UI, nuvio-offline si espone anche come **addon Stremio/Nuvio**
+(`/manifest.json` + `/stream/:type/:id.json`). Installandolo dentro Nuvio, quando cerchi
+un film/serie compare, insieme agli stream normali, una voce "⬇️ Scarica offline" per
+ogni stream scaricabile trovato dagli addon "sorgente" già configurati in nuvio-offline —
+niente più bisogno di cercare separatamente nella web UI.
+
+1. In Nuvio, vai nelle impostazioni addon e aggiungi come URL manifest:
+   `http://<ip-o-host-della-rpi>:4321/manifest.json`
+2. Cerca un titolo in Nuvio come al solito: tra gli stream trovati vedrai anche le voci
+   "⬇️ Scarica offline" prodotte da nuvio-offline.
+3. Selezionandone una, l'addon usa `externalUrl` (invece di `url`): Nuvio dovrebbe aprirla
+   nel browser esterno del device invece di riprodurla internamente — è lì che parte il
+   download, stesso meccanismo della web UI.
+
+> Non è garantito che ogni app "addon-compatible" rispetti `externalUrl` esattamente come
+> Stremio ufficiale: è lo standard previsto dal protocollo, ma vale la pena verificarlo con
+> un test rapido dopo l'installazione.
+
 ## Note su header/proxy degli stream
 
 Alcuni addon restituiscono stream che richiedono header specifici (es. `Referer`,
@@ -145,3 +165,5 @@ public/                # frontend statico (HTML/CSS/JS vanilla)
 | POST   | `/api/addons`                       | Aggiunge un addon (`name`, `manifestUrl`)  |
 | DELETE | `/api/addons/:id`                   | Rimuove un addon                           |
 | GET    | `/api/download?data=`               | Avvia lo streaming del download (`data` è un JSON URL-encoded con `sourceUrl`, `headers`, `title`, ecc.) |
+| GET    | `/manifest.json`                    | Manifest addon Stremio/Nuvio                |
+| GET    | `/stream/:type/:id.json`            | Stream "scaricabili" per l'addon (protocollo Stremio) |

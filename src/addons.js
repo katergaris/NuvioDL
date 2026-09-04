@@ -90,6 +90,17 @@ function buildStremioId(imdbId, mediaType, season, episode) {
   return imdbId;
 }
 
+async function findByImdbId(imdbId, mediaType, apiKey, language) {
+  const data = await tmdbFetch(`/find/${imdbId}`, apiKey, { external_source: 'imdb_id', language });
+  const results = mediaType === 'series' ? data.tv_results : data.movie_results;
+  if (!results || !results.length) return null;
+  const r = results[0];
+  return {
+    title: r.title || r.name || null,
+    year: (r.release_date || r.first_air_date || '').slice(0, 4) || null
+  };
+}
+
 function addonBaseUrl(manifestUrl) {
   return manifestUrl.trim().replace(/\/manifest\.json.*$/i, '').replace(/\/+$/, '');
 }
@@ -144,5 +155,6 @@ module.exports = {
   getSeasons,
   getEpisodes,
   buildStremioId,
+  findByImdbId,
   getStreamsForAllAddons
 };
