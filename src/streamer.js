@@ -6,6 +6,7 @@ const { Readable } = require('stream');
 const config = require('./config');
 
 const FIRST_BYTE_TIMEOUT_MS = 30000;
+const MIN_SUCCESS_BYTES = 256 * 1024;
 
 let active = 0;
 
@@ -139,6 +140,8 @@ function streamHls(sourceUrl, headers, filename, res) {
 
     let settled = false;
     let stderrTail = [];
+    let buffered = [];
+    let bufferedBytes = 0;
 
     const fail = (status, message) => {
       if (settled) return;
@@ -166,23 +169,41 @@ function streamHls(sourceUrl, headers, filename, res) {
       if (stderrTail.length > 40) stderrTail = stderrTail.slice(-40);
     });
 
-    ff.stdout.once('data', firstChunk => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeoutTimer);
-      res.setHeader('Content-Disposition', contentDisposition(filename));
-      res.setHeader('Content-Type', 'video/x-matroska');
-      res.write(firstChunk);
-      ff.stdout.pipe(res);
+    // Non basta il primo byte per considerare il download avviato: uno stream
+    // "vuoto" (sessione scaduta, relay che risponde ma senza contenuto reale) fa
+    // sì che ffmpeg scriva solo l'intestazione del contenitore (poche centinaia di
+    // byte) e poi esca pulitamente, producendo un file inutile ma "riuscito". Si
+    // bufferizza fino a una soglia minima prima di impegnarsi con gli header HTTP:
+    // sotto soglia e processo terminato = errore leggibile, non un file da 282 byte.
+    ff.stdout.on('data', chunk => {
+      if (settled) {
+        if (!res.write(chunk)) ff.stdout.pause();
+        return;
+      }
+      buffered.push(chunk);
+      bufferedBytes += chunk.length;
+      if (bufferedBytes >= MIN_SUCCESS_BYTES) {
+        settled = true;
+        clearTimeout(timeoutTimer);
+        res.setHeader('Content-Disposition', contentDisposition(filename));
+        res.setHeader('Content-Type', 'video/x-matroska');
+        for (const c of buffered) res.write(c);
+        buffered = null;
+      }
     });
+
+    res.on('drain', () => ff.stdout.resume());
 
     ff.on('close', code => {
       if (settled) {
+        if (!res.writableEnded) res.end();
         resolve();
         return;
       }
       clearTimeout(timeoutTimer);
-      if (code === 0) {
+      if (bufferedBytes > 0) {
+        fail(502, `Lo stream si è interrotto dopo soli ${bufferedBytes} byte (fonte vuota, sessione scaduta o non compatibile con un accesso diretto)`);
+      } else if (code === 0) {
         fail(502, 'ffmpeg non ha prodotto alcun output');
       } else {
         const tail = stderrTail.slice(-8).join(' ').slice(0, 400);
