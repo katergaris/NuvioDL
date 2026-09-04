@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>nuvio-offline</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+<header class="topbar">
+  <h1>nuvio<span>offline</span></h1>
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="search">Cerca</button>
+    <button class="tab-btn" data-tab="queue">Coda <span id="queue-badge" class="badge" hidden></span></button>
+    <button class="tab-btn" data-tab="library">Libreria</button>
+    <button class="tab-btn" data-tab="addons">Addon</button>
+  </nav>
+</header>
+
+<main>
+  <section id="tab-search" class="tab-panel active">
+    <form id="search-form" class="search-bar">
+      <input type="text" id="search-input" placeholder="Cerca un film o una serie TV..." autocomplete="off">
+      <button type="submit">Cerca</button>
+    </form>
+    <div id="search-results" class="grid"></div>
+
+    <div id="detail-panel" class="detail-panel" hidden>
+      <button id="detail-back" class="link-btn">&larr; Torna ai risultati</button>
+      <div id="detail-content"></div>
+    </div>
+  </section>
+
+  <section id="tab-queue" class="tab-panel">
+    <h2>Coda di download</h2>
+    <div id="queue-list" class="list"></div>
+  </section>
+
+  <section id="tab-library" class="tab-panel">
+    <h2>Libreria</h2>
+    <div id="library-list" class="list"></div>
+    <div id="player-wrap" class="player-wrap" hidden>
+      <button id="player-close" class="link-btn">&larr; Chiudi player</button>
+      <video id="player" controls></video>
+    </div>
+  </section>
+
+  <section id="tab-addons" class="tab-panel">
+    <h2>Addon Stremio</h2>
+    <form id="addon-form" class="addon-form">
+      <input type="text" id="addon-name" placeholder="Nome addon" autocomplete="off">
+      <input type="text" id="addon-url" placeholder="URL manifest.json" autocomplete="off">
+      <button type="submit">Aggiungi</button>
+    </form>
+    <div id="addon-list" class="list"></div>
+  </section>
+</main>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="/js/app.js"></script>
+</body>
+</html>

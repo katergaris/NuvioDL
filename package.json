@@ -1,0 +1,17 @@
+{
+  "name": "nuvio-offline",
+  "version": "1.0.0",
+  "description": "Web app self-hosted per scaricare offline contenuti trovati tramite addon Stremio/Nuvio",
+  "type": "commonjs",
+  "main": "server.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

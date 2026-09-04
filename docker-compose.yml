@@ -1,0 +1,11 @@
+services:
+  nuvio-offline:
+    build: .
+    container_name: nuvio-offline
+    restart: unless-stopped
+    ports:
+      - "4321:4321"
+    volumes:
+      - ./config.json:/app/config.json
+      - ./downloads:/app/downloads
+      - ./data:/app/data
