@@ -9,18 +9,22 @@ addon Stremio/Nuvio, così da poterli guardare senza connessione (es. in aereo).
 
 ## Come funziona il download
 
-nuvio-offline **non salva nulla sul server**. Quando premi "Scarica sul dispositivo":
+nuvio-offline **non accumula mai file in modo permanente sul server**. Quando premi
+"Scarica sul dispositivo":
 
 - se lo stream è un **file diretto** (mp4/mkv/ecc.), il server fa da semplice proxy: apre
-  la connessione allo stream e ne inoltra i byte al tuo browser mano a mano che arrivano;
+  la connessione allo stream e ne inoltra i byte al tuo browser mano a mano che arrivano,
+  senza mai scriverli su disco;
 - se lo stream è **HLS (.m3u8)**, il server avvia `ffmpeg -c copy` (remux, nessuna
-  ricodifica) e ne trasmette l'output in streaming (pipe), senza mai scriverlo su disco;
+  ricodifica) scrivendo su un **file temporaneo** (scrivere direttamente su pipe/stdout si
+  è rivelato inaffidabile con alcuni addon, producendo download troncati); a remux
+  completato il file viene inoltrato al browser e **cancellato subito dopo**.
 
-in entrambi i casi la risposta HTTP arriva con `Content-Disposition: attachment`, quindi è
+In entrambi i casi la risposta HTTP arriva con `Content-Disposition: attachment`, quindi è
 il **browser del dispositivo da cui hai aperto la pagina** (es. il telefono/tablet dove usi
 Nuvio) a salvare il file nella sua cartella Download tramite il download manager nativo.
-Il server (es. una Raspberry Pi con poco storage) non accumula mai file: fa solo da
-tramite/convertitore per la durata del download.
+Per l'HLS, il download nel browser parte solo a remux completato (per un film intero può
+volerci qualche minuto di attesa prima che compaia); per i file diretti parte subito.
 
 > Nota tecnica: un addon Stremio/Nuvio è solo un endpoint che risponde con JSON
 > (catalogo/stream) — non può in alcun modo comandare all'app Nuvio di scaricare file sul
@@ -128,17 +132,19 @@ nella lista degli stream.
   la porta esposta può cercare e avviare download. Se esponi l'app oltre alla tua rete
   locale, mettila dietro una VPN o un reverse proxy con autenticazione (es. Basic Auth
   su Nginx/Traefik, o un tunnel tipo Tailscale).
-- **Il progresso del download è quello nativo del browser**, non c'è una barra di
-  avanzamento nell'app: dato che il file passa in streaming dal server al browser senza
-  fermarsi da nessuna parte, è il download manager del tuo dispositivo (es. le notifiche
-  di download di Android) a mostrare l'avanzamento.
-- Se lo stream fallisce **dopo** che il download è già iniziato (es. connessione persa a
-  metà), il browser mostrerà un download interrotto/incompleto: va semplicemente
-  riavviato. Se fallisce **prima** di iniziare (URL non raggiungibile, ffmpeg non
-  installato, ecc.), il browser segnala il download come non riuscito.
-- Se la sorgente non risponde affatto (host lento/irraggiungibile, autenticazione non
-  gestita, ecc.), dopo **30 secondi** senza ricevere alcun dato il download viene
-  interrotto con un errore invece di restare in attesa indefinitamente.
+- **Per i file diretti il progresso è quello nativo del browser** (nessuna barra di
+  avanzamento nell'app): il file passa in streaming dal server senza fermarsi, è il
+  download manager del dispositivo a mostrare l'avanzamento. **Per l'HLS**, invece, il
+  browser resta in attesa (senza mostrare nulla) finché ffmpeg non ha finito tutto il
+  remux sul server, poi il download del file completo parte in un colpo solo — per un
+  film intero può volerci qualche minuto prima che compaia.
+- Se un file diretto fallisce **dopo** che il download è già iniziato (es. connessione
+  persa a metà), il browser mostrerà un download interrotto/incompleto: va riavviato.
+- Se la sorgente non risponde entro **30 secondi** (host lento/irraggiungibile) o smette
+  di produrre dati per **30 secondi consecutivi** durante il remux HLS (stream vuoto,
+  sessione scaduta, relay che risponde ma senza contenuto reale), il download viene
+  interrotto con un errore leggibile invece di restare bloccato o produrre un file
+  inutile di poche centinaia di byte.
 - Alcuni CDN legano l'URL firmato dello stream all'IP (e talvolta al Referer) di chi lo
   ha generato — nel nostro caso il device dove gira Nuvio. Se il nostro server prova a
   scaricarlo da un IP diverso, il CDN può rispondere 403 anche inoltrando gli stessi
@@ -162,7 +168,7 @@ nella lista degli stream.
 server.js           # route Express
 src/config.js         # caricamento/scrittura config.json
 src/addons.js          # ricerca TMDB + query addon stream Stremio
-src/streamer.js        # streaming diretto del download (proxy HTTP / remux ffmpeg in pipe)
+src/streamer.js        # streaming diretto del download (proxy HTTP / remux ffmpeg su file temporaneo)
 public/                # frontend statico (HTML/CSS/JS vanilla)
 ```
 

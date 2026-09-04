@@ -1,4 +1,7 @@
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { pipeline } = require('stream/promises');
 const { Readable } = require('stream');
@@ -6,6 +9,7 @@ const { Readable } = require('stream');
 const config = require('./config');
 
 const FIRST_BYTE_TIMEOUT_MS = 30000;
+const STALL_TIMEOUT_MS = 30000;
 const MIN_SUCCESS_BYTES = 256 * 1024;
 
 let active = 0;
@@ -115,107 +119,121 @@ async function streamDirect(sourceUrl, headers, filename, res) {
   }
 }
 
-function streamHls(sourceUrl, headers, filename, res) {
-  return new Promise(resolve => {
-    const args = ['-y'];
-    if (headers && Object.keys(headers).length) {
-      const headerStr = Object.entries(headers)
-        .map(([k, v]) => `${k}: ${v}`)
-        .join('\r\n') + '\r\n';
-      args.push('-headers', headerStr);
-    }
-    args.push(
-      '-i', sourceUrl,
-      '-map', '0:v:0', '-map', '0:a:0?',
-      '-c', 'copy', '-f', 'matroska', 'pipe:1'
-    );
+async function cleanupFile(filePath) {
+  await fs.promises.unlink(filePath).catch(() => {});
+}
 
-    let ff;
-    try {
-      ff = spawn('ffmpeg', args);
-    } catch {
-      res.status(500).json({ error: 'ffmpeg non è installato o non è nel PATH' });
-      return resolve();
-    }
+function fileSize(filePath) {
+  try {
+    return fs.statSync(filePath).size;
+  } catch {
+    return 0;
+  }
+}
 
-    let settled = false;
-    let stderrTail = [];
-    let buffered = [];
-    let bufferedBytes = 0;
+// Scrivere l'output remuxato di ffmpeg direttamente su pipe:1 (stdout) e inoltrarlo in
+// streaming produceva in certi ambienti solo l'intestazione del contenitore (poche
+// centinaia di byte) e poi si interrompeva, anche quando la stessa identica sorgente
+// scaricata scrivendo su un file reale funzionava perfettamente. Per questo ffmpeg scrive
+// qui su un file temporaneo (come nella versione che funzionava), e solo a remux completo
+// il file viene inoltrato al client — cancellato subito dopo, quindi non si accumula mai
+// nulla in modo permanente sulla RPi.
+async function streamHls(sourceUrl, headers, filename, res) {
+  const tempPath = path.join(os.tmpdir(), `nuvio-offline-${crypto.randomUUID()}.mkv`);
+  const args = ['-y'];
+  if (headers && Object.keys(headers).length) {
+    const headerStr = Object.entries(headers)
+      .map(([k, v]) => `${k}: ${v}`)
+      .join('\r\n') + '\r\n';
+    args.push('-headers', headerStr);
+  }
+  args.push('-i', sourceUrl, '-map', '0:v:0', '-map', '0:a:0?', '-c', 'copy', tempPath);
 
-    const fail = (status, message) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeoutTimer);
-      if (!res.headersSent) res.status(status).json({ error: message });
-      else res.end();
-      ff.kill('SIGKILL');
-      resolve();
-    };
+  let ff;
+  try {
+    ff = spawn('ffmpeg', args);
+  } catch {
+    res.status(500).json({ error: 'ffmpeg non è installato o non è nel PATH' });
+    return;
+  }
 
-    const timeoutTimer = setTimeout(() => {
-      const tail = stderrTail.slice(-6).join(' ').slice(0, 300);
-      const suffix = tail ? ` — ultimo log ffmpeg: ${tail}` : ' (ffmpeg non ha ancora prodotto alcun log)';
-      fail(504, `Timeout: nessun dato ricevuto dallo stream entro ${FIRST_BYTE_TIMEOUT_MS / 1000}s (sorgente lenta, irraggiungibile o che richiede autenticazione non gestita)${suffix}`);
-    }, FIRST_BYTE_TIMEOUT_MS);
-
-    ff.on('error', err => {
-      fail(500, err.code === 'ENOENT' ? 'ffmpeg non è installato o non è nel PATH' : err.message);
-    });
-
-    ff.stderr.on('data', chunk => {
-      const text = chunk.toString();
-      stderrTail.push(...text.split('\n').filter(Boolean));
-      if (stderrTail.length > 40) stderrTail = stderrTail.slice(-40);
-    });
-
-    // Non basta il primo byte per considerare il download avviato: uno stream
-    // "vuoto" (sessione scaduta, relay che risponde ma senza contenuto reale) fa
-    // sì che ffmpeg scriva solo l'intestazione del contenitore (poche centinaia di
-    // byte) e poi esca pulitamente, producendo un file inutile ma "riuscito". Si
-    // bufferizza fino a una soglia minima prima di impegnarsi con gli header HTTP:
-    // sotto soglia e processo terminato = errore leggibile, non un file da 282 byte.
-    ff.stdout.on('data', chunk => {
-      if (settled) {
-        if (!res.write(chunk)) ff.stdout.pause();
-        return;
-      }
-      buffered.push(chunk);
-      bufferedBytes += chunk.length;
-      if (bufferedBytes >= MIN_SUCCESS_BYTES) {
-        settled = true;
-        clearTimeout(timeoutTimer);
-        res.setHeader('Content-Disposition', contentDisposition(filename));
-        res.setHeader('Content-Type', 'video/x-matroska');
-        for (const c of buffered) res.write(c);
-        buffered = null;
-      }
-    });
-
-    res.on('drain', () => ff.stdout.resume());
-
-    ff.on('close', code => {
-      if (settled) {
-        if (!res.writableEnded) res.end();
-        resolve();
-        return;
-      }
-      clearTimeout(timeoutTimer);
-      if (bufferedBytes > 0) {
-        fail(502, `Lo stream si è interrotto dopo soli ${bufferedBytes} byte (fonte vuota, sessione scaduta o non compatibile con un accesso diretto)`);
-      } else if (code === 0) {
-        fail(502, 'ffmpeg non ha prodotto alcun output');
-      } else {
-        const tail = stderrTail.slice(-8).join(' ').slice(0, 400);
-        fail(502, `ffmpeg terminato con codice ${code}: ${tail || 'errore sconosciuto'}`);
-      }
-    });
-
-    res.on('close', () => {
-      clearTimeout(timeoutTimer);
-      if (!res.writableEnded) ff.kill('SIGKILL');
-    });
+  let stderrTail = [];
+  ff.stderr.on('data', chunk => {
+    const text = chunk.toString();
+    stderrTail.push(...text.split('\n').filter(Boolean));
+    if (stderrTail.length > 40) stderrTail = stderrTail.slice(-40);
   });
+
+  let lastSize = 0;
+  let stalledSince = Date.now();
+  let stalled = false;
+  const stallCheck = setInterval(() => {
+    const size = fileSize(tempPath);
+    if (size > lastSize) {
+      lastSize = size;
+      stalledSince = Date.now();
+    } else if (Date.now() - stalledSince > STALL_TIMEOUT_MS) {
+      stalled = true;
+      ff.kill('SIGKILL');
+    }
+  }, 2000);
+
+  const onClientAbort = () => ff.kill('SIGKILL');
+  res.on('close', onClientAbort);
+
+  let spawnError = null;
+  const exitCode = await new Promise(resolve => {
+    ff.on('error', err => {
+      spawnError = err;
+      resolve(null);
+    });
+    ff.on('close', code => resolve(code));
+  });
+
+  clearInterval(stallCheck);
+  res.removeListener('close', onClientAbort);
+
+  if (spawnError) {
+    await cleanupFile(tempPath);
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: spawnError.code === 'ENOENT' ? 'ffmpeg non è installato o non è nel PATH' : spawnError.message
+      });
+    }
+    return;
+  }
+
+  const finalSize = fileSize(tempPath);
+
+  if (finalSize < MIN_SUCCESS_BYTES) {
+    await cleanupFile(tempPath);
+    if (res.headersSent || res.writableEnded) return;
+    if (stalled) {
+      res.status(504).json({
+        error: `Timeout: il download si è bloccato, nessun progresso da ${STALL_TIMEOUT_MS / 1000}s (${finalSize} byte scaricati prima dello stallo)`
+      });
+    } else if (exitCode === 0) {
+      res.status(502).json({
+        error: `Lo stream si è interrotto dopo soli ${finalSize} byte (fonte vuota, sessione scaduta o non compatibile con un accesso diretto)`
+      });
+    } else {
+      const tail = stderrTail.slice(-8).join(' ').slice(0, 400);
+      res.status(502).json({ error: `ffmpeg terminato con codice ${exitCode}: ${tail || 'errore sconosciuto'}` });
+    }
+    return;
+  }
+
+  res.setHeader('Content-Disposition', contentDisposition(filename));
+  res.setHeader('Content-Type', 'video/x-matroska');
+  res.setHeader('Content-Length', finalSize);
+
+  try {
+    await pipeline(fs.createReadStream(tempPath), res);
+  } catch {
+    // client disconnesso durante l'invio del file, nessun problema
+  } finally {
+    await cleanupFile(tempPath);
+  }
 }
 
 module.exports = { prepareDownload, streamDownload, sanitizeFilename };
