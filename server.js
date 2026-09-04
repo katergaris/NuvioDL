@@ -3,11 +3,9 @@ const path = require('path');
 
 const config = require('./src/config');
 const addons = require('./src/addons');
-const downloader = require('./src/downloader');
-const library = require('./src/library');
+const streamer = require('./src/streamer');
 
 const cfg = config.get();
-downloader.init(cfg);
 
 const app = express();
 app.use(express.json());
@@ -85,52 +83,35 @@ app.delete('/api/addons/:id', (req, res) => {
   res.status(204).end();
 });
 
-// ---- Download queue ----
+// ---- Download (streaming diretto verso il dispositivo, nessuno storage sul server) ----
 
-app.get('/api/queue', (req, res) => {
-  res.json({ jobs: downloader.list() });
-});
-
-app.post('/api/queue', (req, res) => {
+app.get('/api/download', asyncRoute(async (req, res) => {
+  let params;
   try {
-    const job = downloader.enqueue(req.body || {});
-    res.status(201).json({ job });
-  } catch (e) {
-    res.status(e.status || 400).json({ error: e.message });
+    params = JSON.parse(req.query.data || '{}');
+  } catch {
+    return res.status(400).json({ error: 'Parametro data non valido' });
   }
-});
 
-app.delete('/api/queue/:id', (req, res) => {
-  const removed = downloader.remove(req.params.id);
-  if (!removed) return res.status(404).json({ error: 'Job non trovato' });
-  res.status(204).end();
-});
-
-// ---- Library ----
-
-app.get('/api/library', (req, res) => {
-  res.json({ files: library.list(cfg.downloadsPath) });
-});
-
-app.delete('/api/library/:filename', (req, res) => {
+  let prepared;
   try {
-    const removed = library.remove(cfg.downloadsPath, req.params.filename);
-    if (!removed) return res.status(404).json({ error: 'File non trovato' });
-    res.status(204).end();
+    prepared = streamer.prepareDownload(params);
   } catch (e) {
-    res.status(400).json({ error: e.message });
+    return res.status(e.status || 400).json({ error: e.message });
   }
-});
+
+  await streamer.streamDownload(prepared, res);
+}));
 
 // ---- Static files ----
 
-app.use('/media', express.static(cfg.downloadsPath));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ---- Error handler ----
 
 app.use((err, req, res, next) => {
   console.error(err);
+  if (res.headersSent) return res.end();
   res.status(err.status || 500).json({ error: err.message || 'Errore interno' });
 });
 

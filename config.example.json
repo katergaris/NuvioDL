@@ -2,8 +2,6 @@
   "tmdbApiKey": "",
   "language": "it-IT",
   "port": 4321,
-  "concurrentDownloads": 1,
-  "downloadsPath": "./downloads",
-  "dataPath": "./data",
+  "concurrentDownloads": 2,
   "addons": []
 }

@@ -1,7 +1,5 @@
 const state = {
-  currentItem: null,
-  currentSeason: null,
-  queuePollTimer: null
+  currentItem: null
 };
 
 // ---- Utilities ----
@@ -56,18 +54,6 @@ async function api(path, options = {}) {
   return data;
 }
 
-function humanSize(bytes) {
-  if (bytes === null || bytes === undefined) return '';
-  const units = ['B', 'KB', 'MB', 'GB'];
-  let i = 0, v = bytes;
-  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
-  return `${v.toFixed(v >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
-}
-
-function humanDate(iso) {
-  return new Date(iso).toLocaleString('it-IT', { dateStyle: 'medium', timeStyle: 'short' });
-}
-
 // ---- Tabs ----
 
 function initTabs() {
@@ -79,8 +65,6 @@ function initTabs() {
 function switchTab(name) {
   $all('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
   $all('.tab-panel').forEach(p => p.classList.toggle('active', p.id === `tab-${name}`));
-  if (name === 'queue') loadQueue();
-  if (name === 'library') loadLibrary();
   if (name === 'addons') loadAddons();
 }
 
@@ -244,7 +228,7 @@ async function loadStreams(item, { season, episode }, streamsWrap) {
         el('button', {
           disabled: s.supported ? null : 'disabled',
           onclick: () => downloadStream(s, title, item.type)
-        }, 'Scarica')
+        }, 'Scarica sul dispositivo')
       ]);
       streamsWrap.appendChild(row);
     }
@@ -254,168 +238,26 @@ async function loadStreams(item, { season, episode }, streamsWrap) {
   }
 }
 
-async function downloadStream(stream, title, mediaType) {
-  try {
-    await api('/queue', {
-      method: 'POST',
-      body: JSON.stringify({
-        addonName: stream.addonName,
-        sourceUrl: stream.url,
-        infoHash: stream.infoHash,
-        headers: stream.headers,
-        streamTitle: stream.title,
-        title,
-        mediaType: mediaType === 'tv' ? 'series' : 'movie'
-      })
-    });
-    toast('Aggiunto alla coda di download');
-    switchTab('queue');
-  } catch (e) {
-    toast(e.message, true);
-  }
-}
+function downloadStream(stream, title, mediaType) {
+  const payload = {
+    addonName: stream.addonName,
+    sourceUrl: stream.url,
+    infoHash: stream.infoHash,
+    headers: stream.headers,
+    streamTitle: stream.title,
+    title,
+    mediaType: mediaType === 'tv' ? 'series' : 'movie'
+  };
+  const url = '/api/download?data=' + encodeURIComponent(JSON.stringify(payload));
 
-// ---- Queue ----
+  const a = document.createElement('a');
+  a.href = url;
+  a.setAttribute('download', '');
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 
-async function loadQueue() {
-  const container = $('#queue-list');
-  try {
-    const { jobs } = await api('/queue');
-    renderQueue(jobs);
-  } catch (e) {
-    container.innerHTML = '';
-    toast(e.message, true);
-  }
-}
-
-function renderQueue(jobs) {
-  const container = $('#queue-list');
-  container.innerHTML = '';
-  const badge = $('#queue-badge');
-  const activeCount = jobs.filter(j => j.status === 'queued' || j.status === 'downloading').length;
-  badge.hidden = activeCount === 0;
-  badge.textContent = activeCount;
-
-  if (!jobs.length) {
-    container.appendChild(el('div', { class: 'empty' }, 'La coda è vuota'));
-    return;
-  }
-
-  const statusLabel = { queued: 'in coda', downloading: 'download', done: 'completato', error: 'errore' };
-
-  for (const job of jobs) {
-    const row = el('div', { class: 'row' }, [
-      el('div', { class: 'row-top' }, [
-        el('div', {}, [
-          el('div', { class: 'row-title' }, job.title),
-          el('div', { class: 'row-meta' }, `${job.addonName || ''} · ${job.type === 'hls' ? 'HLS' : 'file diretto'}`)
-        ]),
-        el('div', { class: 'row-actions' }, [
-          el('span', { class: `status-pill status-${job.status}` }, statusLabel[job.status] || job.status),
-          el('button', { class: 'danger', onclick: () => removeJob(job.id) }, job.status === 'downloading' ? 'Annulla' : 'Rimuovi')
-        ])
-      ])
-    ]);
-
-    if (job.status === 'downloading') {
-      const fillClass = job.progress === null ? 'progress-bar-fill indeterminate' : 'progress-bar-fill';
-      const width = job.progress === null ? '' : `width:${job.progress}%`;
-      row.appendChild(el('div', { class: 'progress-bar' }, [
-        el('div', { class: fillClass, style: width })
-      ]));
-      const meta = job.progress !== null
-        ? `${job.progress}%`
-        : (job.downloadedBytes ? humanSize(job.downloadedBytes) + ' scaricati' : 'in corso...');
-      row.appendChild(el('div', { class: 'row-meta' }, meta));
-    }
-
-    if (job.status === 'error' && job.error) {
-      row.appendChild(el('div', { class: 'error-msg' }, job.error));
-    }
-
-    container.appendChild(row);
-  }
-}
-
-async function removeJob(id) {
-  try {
-    await api(`/queue/${id}`, { method: 'DELETE' });
-    loadQueue();
-  } catch (e) {
-    toast(e.message, true);
-  }
-}
-
-function startQueuePolling() {
-  clearInterval(state.queuePollTimer);
-  state.queuePollTimer = setInterval(() => {
-    if ($('#tab-queue').classList.contains('active')) loadQueue();
-  }, 2000);
-}
-
-// ---- Library ----
-
-async function loadLibrary() {
-  const container = $('#library-list');
-  try {
-    const { files } = await api('/library');
-    renderLibrary(files);
-  } catch (e) {
-    container.innerHTML = '';
-    toast(e.message, true);
-  }
-}
-
-function renderLibrary(files) {
-  const container = $('#library-list');
-  container.innerHTML = '';
-  if (!files.length) {
-    container.appendChild(el('div', { class: 'empty' }, 'Nessun file scaricato'));
-    return;
-  }
-  for (const f of files) {
-    const row = el('div', { class: 'row' }, [
-      el('div', { class: 'row-top' }, [
-        el('div', {}, [
-          el('div', { class: 'row-title' }, f.filename),
-          el('div', { class: 'row-meta' }, `${humanSize(f.sizeBytes)} · ${humanDate(f.modifiedAt)}`)
-        ]),
-        el('div', { class: 'row-actions' }, [
-          el('button', { class: 'secondary', onclick: () => playFile(f.filename) }, 'Riproduci'),
-          el('button', { class: 'danger', onclick: () => deleteFile(f.filename) }, 'Elimina')
-        ])
-      ])
-    ]);
-    container.appendChild(row);
-  }
-}
-
-function playFile(filename) {
-  const wrap = $('#player-wrap');
-  const player = $('#player');
-  player.src = `/media/${encodeURIComponent(filename)}`;
-  wrap.hidden = false;
-  wrap.scrollIntoView({ behavior: 'smooth' });
-  player.play().catch(() => {});
-}
-
-$('#player-close').addEventListener('click', () => {
-  const wrap = $('#player-wrap');
-  const player = $('#player');
-  player.pause();
-  player.removeAttribute('src');
-  player.load();
-  wrap.hidden = true;
-});
-
-async function deleteFile(filename) {
-  if (!confirm(`Eliminare "${filename}"?`)) return;
-  try {
-    await api(`/library/${encodeURIComponent(filename)}`, { method: 'DELETE' });
-    loadLibrary();
-  } catch (e) {
-    toast(e.message, true);
-  }
+  toast('Download avviato: controlla le notifiche di download del browser sul tuo dispositivo');
 }
 
 // ---- Addons ----
@@ -485,5 +327,3 @@ async function deleteAddon(id) {
 initTabs();
 initSearch();
 initAddonForm();
-startQueuePolling();
-loadQueue();

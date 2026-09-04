@@ -9,23 +9,11 @@ const DEFAULTS = {
   tmdbApiKey: '',
   language: 'it-IT',
   port: 4321,
-  concurrentDownloads: 1,
-  downloadsPath: './downloads',
-  dataPath: './data',
+  concurrentDownloads: 2,
   addons: []
 };
 
 let cached = null;
-
-function resolvePaths(cfg) {
-  cfg.downloadsPath = path.isAbsolute(cfg.downloadsPath)
-    ? cfg.downloadsPath
-    : path.join(ROOT, cfg.downloadsPath);
-  cfg.dataPath = path.isAbsolute(cfg.dataPath)
-    ? cfg.dataPath
-    : path.join(ROOT, cfg.dataPath);
-  return cfg;
-}
 
 function load() {
   if (cached) return cached;
@@ -39,10 +27,7 @@ function load() {
     raw = {};
   }
 
-  const cfg = resolvePaths({ ...DEFAULTS, ...raw, addons: raw.addons || [] });
-
-  fs.mkdirSync(cfg.downloadsPath, { recursive: true });
-  fs.mkdirSync(cfg.dataPath, { recursive: true });
+  const cfg = { ...DEFAULTS, ...raw, addons: raw.addons || [] };
 
   cached = cfg;
   if (!fs.existsSync(CONFIG_PATH)) save(cfg);
@@ -51,8 +36,7 @@ function load() {
 
 function save(cfg) {
   cached = cfg;
-  const toWrite = { ...cfg };
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(toWrite, null, 2));
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
 }
 
 function get() {

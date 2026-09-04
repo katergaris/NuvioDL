@@ -61,14 +61,6 @@ body {
 .tab-btn:hover { color: var(--text); background: var(--bg-card); }
 .tab-btn.active { color: var(--text); background: var(--bg-card); border-color: var(--border); }
 
-.badge {
-  background: var(--accent);
-  color: #fff;
-  font-size: 0.7rem;
-  padding: 1px 6px;
-  border-radius: 10px;
-}
-
 main { max-width: 1100px; margin: 0 auto; padding: 24px; }
 
 .tab-panel { display: none; }
@@ -182,36 +174,13 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .row-title { font-size: 0.9rem; font-weight: 500; }
 .row-meta { font-size: 0.78rem; color: var(--text-dim); margin-top: 4px; }
 .row-actions { display: flex; gap: 8px; }
-.row-actions button.secondary { background: var(--bg-alt); color: var(--text-dim); border: 1px solid var(--border); }
 .row-actions button.danger { background: transparent; color: var(--red); border: 1px solid var(--red); }
-
-.status-pill {
-  font-size: 0.72rem; padding: 2px 9px; border-radius: 10px; font-weight: 600;
-  text-transform: uppercase; letter-spacing: 0.03em;
-}
-.status-queued { background: #2a2f3d; color: var(--text-dim); }
-.status-downloading { background: #2a3a5a; color: var(--accent); }
-.status-done { background: #1e3a2c; color: var(--green); }
-.status-error { background: #3a2323; color: var(--red); }
-
-.progress-bar { height: 6px; background: var(--bg-alt); border-radius: 4px; margin-top: 10px; overflow: hidden; }
-.progress-bar-fill { height: 100%; background: var(--accent); transition: width 0.3s; }
-.progress-bar-fill.indeterminate { width: 30%; animation: indet 1.4s infinite ease-in-out; }
-@keyframes indet {
-  0% { margin-left: 0%; }
-  50% { margin-left: 70%; }
-  100% { margin-left: 0%; }
-}
-.error-msg { color: var(--red); font-size: 0.8rem; margin-top: 8px; word-break: break-word; }
 
 .addon-form { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
 .addon-form input {
   flex: 1; min-width: 200px; padding: 10px 12px; border-radius: 8px;
   border: 1px solid var(--border); background: var(--bg-card); color: var(--text);
 }
-
-.player-wrap { margin-top: 20px; }
-#player { width: 100%; max-height: 70vh; border-radius: var(--radius); background: #000; }
 
 .empty { color: var(--text-dim); font-size: 0.9rem; padding: 30px 0; text-align: center; }
 

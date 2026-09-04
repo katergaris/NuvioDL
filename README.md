@@ -5,17 +5,35 @@ addon Stremio/Nuvio, così da poterli guardare senza connessione (es. in aereo).
 
 > **Uso previsto**: scaricare solo contenuti per cui hai i diritti di visione. Lo strumento
 > non fornisce contenuti propri: interroga addon Stremio configurati da te ed effettua un
-> semplice remux/download dello stream indicato dall'addon.
+> semplice remux/proxy dello stream indicato dall'addon.
+
+## Come funziona il download
+
+nuvio-offline **non salva nulla sul server**. Quando premi "Scarica sul dispositivo":
+
+- se lo stream è un **file diretto** (mp4/mkv/ecc.), il server fa da semplice proxy: apre
+  la connessione allo stream e ne inoltra i byte al tuo browser mano a mano che arrivano;
+- se lo stream è **HLS (.m3u8)**, il server avvia `ffmpeg -c copy` (remux, nessuna
+  ricodifica) e ne trasmette l'output in streaming (pipe), senza mai scriverlo su disco;
+
+in entrambi i casi la risposta HTTP arriva con `Content-Disposition: attachment`, quindi è
+il **browser del dispositivo da cui hai aperto la pagina** (es. il telefono/tablet dove usi
+Nuvio) a salvare il file nella sua cartella Download tramite il download manager nativo.
+Il server (es. una Raspberry Pi con poco storage) non accumula mai file: fa solo da
+tramite/convertitore per la durata del download.
+
+> Nota tecnica: un addon Stremio/Nuvio è solo un endpoint che risponde con JSON
+> (catalogo/stream) — non può in alcun modo comandare all'app Nuvio di scaricare file sul
+> dispositivo. Per questo nuvio-offline resta una web app separata: la apri dal browser
+> dello stesso device dove usi Nuvio, e il download finisce lì.
 
 ## Funzionalità
 
 - Ricerca film/serie TV su TMDB, selezione stagione/episodio per le serie
 - Interrogazione di uno o più addon stream Stremio (protocollo standard `/stream/{type}/{id}.json`)
-- Coda di download persistente con stati `queued` / `downloading` / `done` / `error`
-- Download HLS (.m3u8) via `ffmpeg -c copy` (remux, nessuna ricodifica), con supporto header
-  `Referer` / `User-Agent` richiesti dallo stream
-- Download diretto in streaming per file mp4/mkv/ecc.
-- Libreria dei file scaricati con player HTML5 integrato ed eliminazione
+- Download diretto verso il dispositivo del browser, zero storage sul server
+- Header `Referer` / `User-Agent` richiesti dallo stream inoltrati automaticamente
+  (sia per il remux ffmpeg che per il proxy diretto)
 
 ## Requisiti
 
@@ -45,9 +63,7 @@ Campi principali:
 | `tmdbApiKey`          | API key v3 di TMDB                                                 |
 | `language`             | Lingua risultati/metadati TMDB (es. `it-IT`)                        |
 | `port`                 | Porta HTTP dell'app (default `4321`)                                |
-| `concurrentDownloads`  | Numero massimo di download simultanei                               |
-| `downloadsPath`        | Cartella dove salvare i file scaricati                              |
-| `dataPath`             | Cartella dati applicativi (coda persistente)                        |
+| `concurrentDownloads`  | Numero massimo di trasferimenti (remux/proxy) simultanei            |
 | `addons`               | Lista addon Stremio (gestibile anche dalla UI, tab "Addon")         |
 
 Gli addon si aggiungono anche a runtime dalla tab **Addon** dell'interfaccia (nome +
@@ -71,18 +87,16 @@ cp config.example.json config.json   # poi modifica tmdbApiKey
 docker compose up -d --build
 ```
 
-L'immagine (`node:22-alpine`) include `ffmpeg` via `apk`. Il `docker-compose.yml` monta
-`config.json`, `downloads/` e `data/` come volumi persistenti, così configurazione, file
-scaricati e coda sopravvivono ai riavvii del container.
+L'immagine (`node:22-alpine`) include `ffmpeg` via `apk`. Non servono volumi per i file
+scaricati (non vengono mai scritti su disco): il `docker-compose.yml` monta solo
+`config.json`, così configurazione e lista addon sopravvivono ai riavvii del container.
 
 ## Note su header/proxy degli stream
 
 Alcuni addon restituiscono stream che richiedono header specifici (es. `Referer`,
 `User-Agent`) tramite `behaviorHints.proxyHeaders.request` nella risposta
-`/stream/{type}/{id}.json`. L'app li inoltra automaticamente:
-
-- per stream HLS, passati a `ffmpeg` con `-headers`
-- per download diretti, passati come header della richiesta HTTP
+`/stream/{type}/{id}.json`. L'app li inoltra automaticamente sia per il remux `ffmpeg`
+(`-headers`) sia per il proxy diretto (header della richiesta HTTP verso lo stream).
 
 Gli stream che espongono solo un `infoHash` (torrent/magnet) senza un `url` diretto
 **non sono scaricabili** da questo strumento e vengono mostrati come "non supportati"
@@ -91,24 +105,31 @@ nella lista degli stream.
 ## Limiti noti
 
 - **Nessuna autenticazione integrata.** L'app non ha login: chiunque possa raggiungere
-  la porta esposta può cercare, scaricare ed eliminare file. Se esponi l'app oltre alla
-  tua rete locale, mettila dietro una VPN o un reverse proxy con autenticazione
-  (es. Basic Auth su Nginx/Traefik, o un tunnel tipo Tailscale).
+  la porta esposta può cercare e avviare download. Se esponi l'app oltre alla tua rete
+  locale, mettila dietro una VPN o un reverse proxy con autenticazione (es. Basic Auth
+  su Nginx/Traefik, o un tunnel tipo Tailscale).
+- **Il progresso del download è quello nativo del browser**, non c'è una barra di
+  avanzamento nell'app: dato che il file passa in streaming dal server al browser senza
+  fermarsi da nessuna parte, è il download manager del tuo dispositivo (es. le notifiche
+  di download di Android) a mostrare l'avanzamento.
+- Se lo stream fallisce **dopo** che il download è già iniziato (es. connessione persa a
+  metà), il browser mostrerà un download interrotto/incompleto: va semplicemente
+  riavviato. Se fallisce **prima** di iniziare (URL non raggiungibile, ffmpeg non
+  installato, ecc.), il browser segnala il download come non riuscito.
 - Il remux HLS con `-c copy` funziona quando i codec sorgente sono compatibili con il
-  container di output (`.mkv`, scelto proprio per la sua tolleranza sui codec); se lo
-  stream usa codec non supportati dal player HTML5 del browser, la riproduzione
-  nella Libreria potrebbe non funzionare pur avendo scaricato correttamente il file.
+  container di output (`.mkv`, scelto per la sua tolleranza sui codec).
 - Stream con solo `infoHash` (torrent) non sono gestiti: servirebbe un client BitTorrent,
   fuori dallo scope di questo tool.
+- Devi aprire nuvio-offline dal **browser dello stesso dispositivo** su cui vuoi che il
+  file scaricato finisca (es. il telefono/tablet dove usi Nuvio).
 
 ## Struttura del progetto
 
 ```
 server.js           # route Express
-src/config.js        # caricamento/scrittura config.json
-src/addons.js         # ricerca TMDB + query addon stream Stremio
-src/downloader.js     # coda di download, ffmpeg, download diretto
-src/library.js         # gestione file scaricati
+src/config.js         # caricamento/scrittura config.json
+src/addons.js          # ricerca TMDB + query addon stream Stremio
+src/streamer.js        # streaming diretto del download (proxy HTTP / remux ffmpeg in pipe)
 public/                # frontend statico (HTML/CSS/JS vanilla)
 ```
 
@@ -123,8 +144,4 @@ public/                # frontend statico (HTML/CSS/JS vanilla)
 | GET    | `/api/addons`                       | Lista addon configurati                    |
 | POST   | `/api/addons`                       | Aggiunge un addon (`name`, `manifestUrl`)  |
 | DELETE | `/api/addons/:id`                   | Rimuove un addon                           |
-| GET    | `/api/queue`                        | Stato della coda di download               |
-| POST   | `/api/queue`                        | Accoda un download                         |
-| DELETE | `/api/queue/:id`                    | Annulla/rimuove un job dalla coda          |
-| GET    | `/api/library`                      | Lista file scaricati                       |
-| DELETE | `/api/library/:filename`            | Elimina un file scaricato                  |
+| GET    | `/api/download?data=`               | Avvia lo streaming del download (`data` è un JSON URL-encoded con `sourceUrl`, `headers`, `title`, ecc.) |
