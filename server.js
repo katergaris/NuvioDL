@@ -85,10 +85,26 @@ app.delete('/api/addons/:id', (req, res) => {
 
 // ---- Download (streaming diretto verso il dispositivo, nessuno storage sul server) ----
 
+function decodeDownloadPayload(raw) {
+  if (!raw) return {};
+  // Formato preferito: base64url (nessun carattere speciale, sopravvive a qualunque
+  // ri-codifica imperfetta lungo il tragitto browser/app -> proxy -> server).
+  try {
+    return JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
+  } catch {
+    // Fallback per compatibilità con eventuali link vecchio formato (JSON + encodeURIComponent).
+    return JSON.parse(raw);
+  }
+}
+
+function encodeDownloadPayload(payload) {
+  return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+}
+
 app.get('/api/download', asyncRoute(async (req, res) => {
   let params;
   try {
-    params = JSON.parse(req.query.data || '{}');
+    params = decodeDownloadPayload(req.query.data);
   } catch {
     return res.status(400).json({ error: 'Parametro data non valido' });
   }
@@ -171,7 +187,7 @@ app.get('/stream/:type/:id.json', addonCors, asyncRoute(async (req, res) => {
       streamTitle: s.title,
       title: label
     };
-    const downloadUrl = `${base}/api/download?data=${encodeURIComponent(JSON.stringify(payload))}`;
+    const downloadUrl = `${base}/api/download?data=${encodeDownloadPayload(payload)}`;
     return {
       name: '⬇️ Scarica offline',
       title: `${s.title}\n${s.addonName}`,

@@ -238,6 +238,13 @@ async function loadStreams(item, { season, episode }, streamsWrap) {
   }
 }
 
+function base64UrlEncode(str) {
+  const bytes = new TextEncoder().encode(str);
+  let binary = '';
+  bytes.forEach(b => { binary += String.fromCharCode(b); });
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
 function downloadStream(stream, title, mediaType) {
   const payload = {
     addonName: stream.addonName,
@@ -248,7 +255,7 @@ function downloadStream(stream, title, mediaType) {
     title,
     mediaType: mediaType === 'tv' ? 'series' : 'movie'
   };
-  const url = '/api/download?data=' + encodeURIComponent(JSON.stringify(payload));
+  const url = '/api/download?data=' + base64UrlEncode(JSON.stringify(payload));
 
   const a = document.createElement('a');
   a.href = url;
