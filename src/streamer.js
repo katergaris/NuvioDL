@@ -82,6 +82,16 @@ async function streamDirect(sourceUrl, headers, filename, res) {
   }
   clearTimeout(timeoutTimer);
 
+  if (upstream.status === 403) {
+    // Alcuni CDN legano l'URL firmato all'IP/contesto di chi lo ha generato (il device
+    // dove gira Nuvio): il nostro server, scaricando da un IP diverso, viene rifiutato
+    // anche con gli stessi header. Come fallback, reindirizziamo il browser a scaricare
+    // direttamente dalla fonte: perdiamo il controllo su Content-Disposition/header
+    // custom, ma l'IP torna a combaciare con quello atteso dal CDN.
+    res.redirect(302, sourceUrl);
+    return;
+  }
+
   if (!upstream.ok) {
     res.status(502).json({ error: `Il server dello stream ha risposto ${upstream.status} ${upstream.statusText}` });
     return;

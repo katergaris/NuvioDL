@@ -139,6 +139,16 @@ nella lista degli stream.
 - Se la sorgente non risponde affatto (host lento/irraggiungibile, autenticazione non
   gestita, ecc.), dopo **30 secondi** senza ricevere alcun dato il download viene
   interrotto con un errore invece di restare in attesa indefinitamente.
+- Alcuni CDN legano l'URL firmato dello stream all'IP (e talvolta al Referer) di chi lo
+  ha generato — nel nostro caso il device dove gira Nuvio. Se il nostro server prova a
+  scaricarlo da un IP diverso, il CDN può rispondere 403 anche inoltrando gli stessi
+  header. Per i file diretti (non HLS), in questo caso il server reindirizza
+  automaticamente il browser a scaricare direttamente dalla fonte (stesso IP di chi ha
+  generato il link): funziona, ma si perde il download forzato con nome file automatico
+  (il browser potrebbe riprodurre il video invece di scaricarlo, a seconda del CDN).
+  Per l'HLS via ffmpeg questo fallback non è applicabile (Android/Chrome non riproduce
+  `.m3u8` nativamente), quindi se un CDN blocca per IP anche gli stream HLS non c'è
+  attualmente un workaround.
 - Il remux HLS con `-c copy` funziona quando i codec sorgente sono compatibili con il
   container di output (`.mkv`, scelto per la sua tolleranza sui codec).
 - Stream con solo `infoHash` (torrent) non sono gestiti: servirebbe un client BitTorrent,
