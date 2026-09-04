@@ -5,6 +5,8 @@ const { Readable } = require('stream');
 
 const config = require('./config');
 
+const FIRST_BYTE_TIMEOUT_MS = 30000;
+
 let active = 0;
 
 function sanitizeFilename(name) {
@@ -64,13 +66,22 @@ async function streamDownload({ sourceUrl, headers, filename, type }, res) {
 }
 
 async function streamDirect(sourceUrl, headers, filename, res) {
+  const controller = new AbortController();
+  const timeoutTimer = setTimeout(() => controller.abort(), FIRST_BYTE_TIMEOUT_MS);
+
   let upstream;
   try {
-    upstream = await fetch(sourceUrl, { headers: headers || {} });
+    upstream = await fetch(sourceUrl, { headers: headers || {}, signal: controller.signal });
   } catch (e) {
-    res.status(502).json({ error: `Impossibile contattare lo stream: ${e.message}` });
+    clearTimeout(timeoutTimer);
+    const message = e.name === 'AbortError'
+      ? `Timeout: lo stream non ha risposto entro ${FIRST_BYTE_TIMEOUT_MS / 1000}s`
+      : `Impossibile contattare lo stream: ${e.message}`;
+    res.status(502).json({ error: message });
     return;
   }
+  clearTimeout(timeoutTimer);
+
   if (!upstream.ok) {
     res.status(502).json({ error: `Il server dello stream ha risposto ${upstream.status} ${upstream.statusText}` });
     return;
@@ -118,10 +129,16 @@ function streamHls(sourceUrl, headers, filename, res) {
     const fail = (status, message) => {
       if (settled) return;
       settled = true;
+      clearTimeout(timeoutTimer);
       if (!res.headersSent) res.status(status).json({ error: message });
       else res.end();
+      ff.kill('SIGKILL');
       resolve();
     };
+
+    const timeoutTimer = setTimeout(() => {
+      fail(504, `Timeout: nessun dato ricevuto dallo stream entro ${FIRST_BYTE_TIMEOUT_MS / 1000}s (sorgente lenta, irraggiungibile o che richiede autenticazione non gestita)`);
+    }, FIRST_BYTE_TIMEOUT_MS);
 
     ff.on('error', err => {
       fail(500, err.code === 'ENOENT' ? 'ffmpeg non è installato o non è nel PATH' : err.message);
@@ -136,6 +153,7 @@ function streamHls(sourceUrl, headers, filename, res) {
     ff.stdout.once('data', firstChunk => {
       if (settled) return;
       settled = true;
+      clearTimeout(timeoutTimer);
       res.setHeader('Content-Disposition', contentDisposition(filename));
       res.setHeader('Content-Type', 'video/x-matroska');
       res.write(firstChunk);
@@ -147,6 +165,7 @@ function streamHls(sourceUrl, headers, filename, res) {
         resolve();
         return;
       }
+      clearTimeout(timeoutTimer);
       if (code === 0) {
         fail(502, 'ffmpeg non ha prodotto alcun output');
       } else {
@@ -156,6 +175,7 @@ function streamHls(sourceUrl, headers, filename, res) {
     });
 
     res.on('close', () => {
+      clearTimeout(timeoutTimer);
       if (!res.writableEnded) ff.kill('SIGKILL');
     });
   });

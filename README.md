@@ -136,6 +136,9 @@ nella lista degli stream.
   metà), il browser mostrerà un download interrotto/incompleto: va semplicemente
   riavviato. Se fallisce **prima** di iniziare (URL non raggiungibile, ffmpeg non
   installato, ecc.), il browser segnala il download come non riuscito.
+- Se la sorgente non risponde affatto (host lento/irraggiungibile, autenticazione non
+  gestita, ecc.), dopo **30 secondi** senza ricevere alcun dato il download viene
+  interrotto con un errore invece di restare in attesa indefinitamente.
 - Il remux HLS con `-c copy` funziona quando i codec sorgente sono compatibili con il
   container di output (`.mkv`, scelto per la sua tolleranza sui codec).
 - Stream con solo `infoHash` (torrent) non sono gestiti: servirebbe un client BitTorrent,
