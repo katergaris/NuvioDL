@@ -65,7 +65,10 @@ function initTabs() {
 function switchTab(name) {
   $all('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
   $all('.tab-panel').forEach(p => p.classList.toggle('active', p.id === `tab-${name}`));
-  if (name === 'addons') loadAddons();
+  if (name === 'settings') {
+    loadAddons();
+    loadSettings();
+  }
 }
 
 // ---- Search ----
@@ -182,8 +185,8 @@ async function loadEpisodes(item, season, episodeWrap, streamsWrap) {
         ])
       ]);
       row.addEventListener('click', () => {
-        $all('.episode-row', episodeWrap).forEach(r => r.style.borderColor = '');
-        row.style.borderColor = 'var(--accent)';
+        $all('.episode-row', episodeWrap).forEach(r => r.classList.remove('selected'));
+        row.classList.add('selected');
         loadStreams(item, { season, episode: ep.episodeNumber }, streamsWrap);
       });
       episodeWrap.appendChild(row);
@@ -226,9 +229,10 @@ async function loadStreams(item, { season, episode }, streamsWrap) {
           el('div', { class: 'stream-addon' }, s.addonName)
         ]),
         el('button', {
+          class: 'btn btn-accent',
           disabled: s.supported ? null : 'disabled',
           onclick: () => downloadStream(s, title, item.type)
-        }, 'Scarica sul dispositivo')
+        }, '⬇ SCARICA')
       ]);
       streamsWrap.appendChild(row);
     }
@@ -295,7 +299,7 @@ function renderAddons(addons) {
           el('div', { class: 'row-meta' }, a.manifestUrl)
         ]),
         el('div', { class: 'row-actions' }, [
-          el('button', { class: 'danger', onclick: () => deleteAddon(a.id) }, 'Rimuovi')
+          el('button', { class: 'btn btn-danger', onclick: () => deleteAddon(a.id) }, 'RIMUOVI')
         ])
       ])
     ]);
@@ -329,8 +333,41 @@ async function deleteAddon(id) {
   }
 }
 
+// ---- Impostazioni ----
+
+async function loadSettings() {
+  try {
+    const settings = await api('/settings');
+    $('#settings-tmdb-key').value = settings.tmdbApiKey || '';
+    $('#settings-language').value = settings.language || 'it-IT';
+    $('#settings-concurrent').value = settings.concurrentDownloads || 2;
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+function initSettingsForm() {
+  $('#settings-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    try {
+      await api('/settings', {
+        method: 'POST',
+        body: JSON.stringify({
+          tmdbApiKey: $('#settings-tmdb-key').value.trim(),
+          language: $('#settings-language').value,
+          concurrentDownloads: $('#settings-concurrent').value
+        })
+      });
+      toast('Impostazioni salvate');
+    } catch (e) {
+      toast(e.message, true);
+    }
+  });
+}
+
 // ---- Init ----
 
 initTabs();
 initSearch();
 initAddonForm();
+initSettingsForm();
