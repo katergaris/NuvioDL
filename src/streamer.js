@@ -12,7 +12,7 @@ const FIRST_BYTE_TIMEOUT_MS = 30000;
 const STALL_TIMEOUT_MS = 30000;
 const MIN_SUCCESS_BYTES = 256 * 1024;
 const PREFLIGHT_DURATION_SEC = 3;
-const PREFLIGHT_TIMEOUT_MS = 15000;
+const PREFLIGHT_TIMEOUT_MS = 45000;
 const PREFLIGHT_MIN_BYTES = 32 * 1024;
 const MAX_DOWNLOAD_MS = 20 * 60 * 1000;
 
@@ -154,6 +154,19 @@ function fileSize(filePath) {
   }
 }
 
+// Le prime righe che ffmpeg scrive su stderr sono sempre il banner di avvio (versione,
+// configurazione di build, elenco librerie "lib*"), non un errore. Se il processo viene
+// ucciso prima di arrivare a un vero messaggio (es. per timeout su una fonte lenta a
+// rispondere), usare lo stderr grezzo come "motivo" mostra solo questo banner
+// confusionario invece di un messaggio comprensibile.
+function meaningfulStderrTail(lines) {
+  const filtered = lines.filter(l =>
+    !/^ffmpeg version/i.test(l) &&
+    !/^\s*(lib\w+|built with|configuration:)/i.test(l)
+  );
+  return filtered.slice(-8).join(' ').slice(0, 400);
+}
+
 function buildHeaderArgs(headers) {
   if (!headers || !Object.keys(headers).length) return [];
   const headerStr = Object.entries(headers)
@@ -208,10 +221,10 @@ async function preflightCheck(sourceUrl, headers) {
 
   if (size >= PREFLIGHT_MIN_BYTES) return { ok: true };
 
-  const tail = stderrTail.slice(-6).join(' ').slice(0, 300);
+  const tail = meaningfulStderrTail(stderrTail);
   return {
     ok: false,
-    error: tail || `nessun dato ricevuto (${size} byte)`
+    error: tail || `nessuna risposta dalla fonte entro ${PREFLIGHT_TIMEOUT_MS / 1000}s (${size} byte ricevuti)`
   };
 }
 
@@ -313,7 +326,7 @@ async function streamHls(sourceUrl, headers, filename, res) {
     } else if (exitCode === 0) {
       sendError(res, 502, `Lo stream si è interrotto dopo soli ${finalSize} byte (fonte vuota, sessione scaduta o non compatibile con un accesso diretto)`);
     } else {
-      const tail = stderrTail.slice(-8).join(' ').slice(0, 400);
+      const tail = meaningfulStderrTail(stderrTail);
       sendError(res, 502, `ffmpeg terminato con codice ${exitCode}: ${tail || 'errore sconosciuto'}`);
     }
     return;
