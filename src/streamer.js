@@ -11,6 +11,9 @@ const config = require('./config');
 const FIRST_BYTE_TIMEOUT_MS = 30000;
 const STALL_TIMEOUT_MS = 30000;
 const MIN_SUCCESS_BYTES = 256 * 1024;
+const PREFLIGHT_DURATION_SEC = 3;
+const PREFLIGHT_TIMEOUT_MS = 15000;
+const PREFLIGHT_MIN_BYTES = 32 * 1024;
 
 let active = 0;
 
@@ -131,6 +134,67 @@ function fileSize(filePath) {
   }
 }
 
+function buildHeaderArgs(headers) {
+  if (!headers || !Object.keys(headers).length) return [];
+  const headerStr = Object.entries(headers)
+    .map(([k, v]) => `${k}: ${v}`)
+    .join('\r\n') + '\r\n';
+  return ['-headers', headerStr];
+}
+
+// Test rapido (pochi secondi) prima di impegnarsi nel remux completo: evita di scoprire
+// dopo fino a 30s di stallo che una fonte è morta/vuota. Scrive un campione minimo su un
+// file temporaneo separato, cancellato subito dopo in ogni caso.
+async function preflightCheck(sourceUrl, headers) {
+  const samplePath = path.join(os.tmpdir(), `nuvio-offline-preflight-${crypto.randomUUID()}.mkv`);
+  const args = ['-y', ...buildHeaderArgs(headers), '-t', String(PREFLIGHT_DURATION_SEC), '-i', sourceUrl,
+    '-map', '0:v:0', '-map', '0:a:0?', '-c', 'copy', samplePath];
+
+  let ff;
+  try {
+    ff = spawn('ffmpeg', args);
+  } catch {
+    return { ok: false, error: 'ffmpeg non è installato o non è nel PATH' };
+  }
+
+  let stderrTail = [];
+  ff.stderr.on('data', chunk => {
+    const text = chunk.toString();
+    stderrTail.push(...text.split('\n').filter(Boolean));
+    if (stderrTail.length > 20) stderrTail = stderrTail.slice(-20);
+  });
+
+  const timeoutTimer = setTimeout(() => ff.kill('SIGKILL'), PREFLIGHT_TIMEOUT_MS);
+
+  let spawnError = null;
+  await new Promise(resolve => {
+    ff.on('error', err => {
+      spawnError = err;
+      resolve();
+    });
+    ff.on('close', () => resolve());
+  });
+  clearTimeout(timeoutTimer);
+
+  const size = fileSize(samplePath);
+  await cleanupFile(samplePath);
+
+  if (spawnError) {
+    return {
+      ok: false,
+      error: spawnError.code === 'ENOENT' ? 'ffmpeg non è installato o non è nel PATH' : spawnError.message
+    };
+  }
+
+  if (size >= PREFLIGHT_MIN_BYTES) return { ok: true };
+
+  const tail = stderrTail.slice(-6).join(' ').slice(0, 300);
+  return {
+    ok: false,
+    error: tail || `nessun dato ricevuto (${size} byte)`
+  };
+}
+
 // Scrivere l'output remuxato di ffmpeg direttamente su pipe:1 (stdout) e inoltrarlo in
 // streaming produceva in certi ambienti solo l'intestazione del contenitore (poche
 // centinaia di byte) e poi si interrompeva, anche quando la stessa identica sorgente
@@ -139,15 +203,14 @@ function fileSize(filePath) {
 // il file viene inoltrato al client — cancellato subito dopo, quindi non si accumula mai
 // nulla in modo permanente sulla RPi.
 async function streamHls(sourceUrl, headers, filename, res) {
-  const tempPath = path.join(os.tmpdir(), `nuvio-offline-${crypto.randomUUID()}.mkv`);
-  const args = ['-y'];
-  if (headers && Object.keys(headers).length) {
-    const headerStr = Object.entries(headers)
-      .map(([k, v]) => `${k}: ${v}`)
-      .join('\r\n') + '\r\n';
-    args.push('-headers', headerStr);
+  const preflight = await preflightCheck(sourceUrl, headers);
+  if (!preflight.ok) {
+    res.status(502).json({ error: `Test rapido fallito: ${preflight.error}` });
+    return;
   }
-  args.push('-i', sourceUrl, '-map', '0:v:0', '-map', '0:a:0?', '-c', 'copy', tempPath);
+
+  const tempPath = path.join(os.tmpdir(), `nuvio-offline-${crypto.randomUUID()}.mkv`);
+  const args = ['-y', ...buildHeaderArgs(headers), '-i', sourceUrl, '-map', '0:v:0', '-map', '0:a:0?', '-c', 'copy', tempPath];
 
   let ff;
   try {
