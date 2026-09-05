@@ -11,10 +11,6 @@ const config = require('./config');
 const FIRST_BYTE_TIMEOUT_MS = 30000;
 const STALL_TIMEOUT_MS = 30000;
 const MIN_SUCCESS_BYTES = 256 * 1024;
-const PREFLIGHT_DURATION_SEC = 3;
-const PREFLIGHT_TIMEOUT_MS = 45000;
-const PREFLIGHT_MIN_BYTES = 32 * 1024;
-const MAX_DOWNLOAD_MS = 20 * 60 * 1000;
 
 let active = 0;
 
@@ -45,25 +41,6 @@ function contentDisposition(filename) {
   return `attachment; filename="${ascii}"; filename*=UTF-8''${utf8}`;
 }
 
-// Il download nativo di Nuvio (e il tasto "Scarica" della web UI) non controllano lo
-// status HTTP: salvano comunque qualunque cosa arrivi sul link. Un errore in JSON
-// finirebbe scaricato come un file "download.json" incomprensibile. Rispondendo invece
-// con testo semplice e un nome file che contiene già un pezzo del motivo del
-// fallimento, l'utente capisce cosa è successo anche solo guardando l'elenco dei
-// download, senza doverlo aprire.
-function sendError(res, status, message) {
-  if (res.headersSent) {
-    res.end();
-    return;
-  }
-  const snippet = sanitizeFilename(message.split('\n')[0].slice(0, 80)) || 'errore sconosciuto';
-  const filename = `ERRORE ${status} - ${snippet}.txt`;
-  res.status(status);
-  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-  res.setHeader('Content-Disposition', contentDisposition(filename));
-  res.send(`DOWNLOAD NON RIUSCITO\n\n${message}`);
-}
-
 function prepareDownload({ sourceUrl, headers, title, streamTitle }) {
   if (!sourceUrl || /^magnet:/i.test(sourceUrl)) {
     const err = new Error('Stream non supportato: nessun URL diretto disponibile (solo infoHash/torrent)');
@@ -78,7 +55,7 @@ function prepareDownload({ sourceUrl, headers, title, streamTitle }) {
 
 async function streamDownload({ sourceUrl, headers, filename, type }, res) {
   if (active >= (config.get().concurrentDownloads || 1)) {
-    sendError(res, 429, 'Troppi download in corso, riprova tra poco');
+    res.status(429).json({ error: 'Troppi download in corso, riprova tra poco' });
     return;
   }
   active++;
@@ -105,7 +82,7 @@ async function streamDirect(sourceUrl, headers, filename, res) {
     const message = e.name === 'AbortError'
       ? `Timeout: lo stream non ha risposto entro ${FIRST_BYTE_TIMEOUT_MS / 1000}s`
       : `Impossibile contattare lo stream: ${e.message}`;
-    sendError(res, 502, message);
+    res.status(502).json({ error: message });
     return;
   }
   clearTimeout(timeoutTimer);
@@ -121,7 +98,7 @@ async function streamDirect(sourceUrl, headers, filename, res) {
   }
 
   if (!upstream.ok) {
-    sendError(res, 502, `Il server dello stream ha risposto ${upstream.status} ${upstream.statusText}`);
+    res.status(502).json({ error: `Il server dello stream ha risposto ${upstream.status} ${upstream.statusText}` });
     return;
   }
 
@@ -154,80 +131,6 @@ function fileSize(filePath) {
   }
 }
 
-// Le prime righe che ffmpeg scrive su stderr sono sempre il banner di avvio (versione,
-// configurazione di build, elenco librerie "lib*"), non un errore. Se il processo viene
-// ucciso prima di arrivare a un vero messaggio (es. per timeout su una fonte lenta a
-// rispondere), usare lo stderr grezzo come "motivo" mostra solo questo banner
-// confusionario invece di un messaggio comprensibile.
-function meaningfulStderrTail(lines) {
-  const filtered = lines.filter(l =>
-    !/^ffmpeg version/i.test(l) &&
-    !/^\s*(lib\w+|built with|configuration:)/i.test(l)
-  );
-  return filtered.slice(-8).join(' ').slice(0, 400);
-}
-
-function buildHeaderArgs(headers) {
-  if (!headers || !Object.keys(headers).length) return [];
-  const headerStr = Object.entries(headers)
-    .map(([k, v]) => `${k}: ${v}`)
-    .join('\r\n') + '\r\n';
-  return ['-headers', headerStr];
-}
-
-// Test rapido (pochi secondi) prima di impegnarsi nel remux completo: evita di scoprire
-// dopo fino a 30s di stallo che una fonte è morta/vuota. Scrive un campione minimo su un
-// file temporaneo separato, cancellato subito dopo in ogni caso.
-async function preflightCheck(sourceUrl, headers) {
-  const samplePath = path.join(os.tmpdir(), `nuvio-offline-preflight-${crypto.randomUUID()}.mkv`);
-  const args = ['-y', ...buildHeaderArgs(headers), '-t', String(PREFLIGHT_DURATION_SEC), '-i', sourceUrl,
-    '-map', '0:v:0', '-map', '0:a:0?', '-c', 'copy', samplePath];
-
-  let ff;
-  try {
-    ff = spawn('ffmpeg', args);
-  } catch {
-    return { ok: false, error: 'ffmpeg non è installato o non è nel PATH' };
-  }
-
-  let stderrTail = [];
-  ff.stderr.on('data', chunk => {
-    const text = chunk.toString();
-    stderrTail.push(...text.split('\n').filter(Boolean));
-    if (stderrTail.length > 20) stderrTail = stderrTail.slice(-20);
-  });
-
-  const timeoutTimer = setTimeout(() => ff.kill('SIGKILL'), PREFLIGHT_TIMEOUT_MS);
-
-  let spawnError = null;
-  await new Promise(resolve => {
-    ff.on('error', err => {
-      spawnError = err;
-      resolve();
-    });
-    ff.on('close', () => resolve());
-  });
-  clearTimeout(timeoutTimer);
-
-  const size = fileSize(samplePath);
-  await cleanupFile(samplePath);
-
-  if (spawnError) {
-    return {
-      ok: false,
-      error: spawnError.code === 'ENOENT' ? 'ffmpeg non è installato o non è nel PATH' : spawnError.message
-    };
-  }
-
-  if (size >= PREFLIGHT_MIN_BYTES) return { ok: true };
-
-  const tail = meaningfulStderrTail(stderrTail);
-  return {
-    ok: false,
-    error: tail || `nessuna risposta dalla fonte entro ${PREFLIGHT_TIMEOUT_MS / 1000}s (${size} byte ricevuti)`
-  };
-}
-
 // Scrivere l'output remuxato di ffmpeg direttamente su pipe:1 (stdout) e inoltrarlo in
 // streaming produceva in certi ambienti solo l'intestazione del contenitore (poche
 // centinaia di byte) e poi si interrompeva, anche quando la stessa identica sorgente
@@ -236,30 +139,21 @@ async function preflightCheck(sourceUrl, headers) {
 // il file viene inoltrato al client — cancellato subito dopo, quindi non si accumula mai
 // nulla in modo permanente sulla RPi.
 async function streamHls(sourceUrl, headers, filename, res) {
-  const preflight = await preflightCheck(sourceUrl, headers);
-
-  // Il preflight può richiedere fino a 15s durante i quali non c'è ancora nessun
-  // listener che aborta il remux completo se il client si disconnette. Senza questo
-  // controllo, un client ormai assente non impedirebbe comunque la partenza del remux
-  // completo, che resterebbe "attivo" (occupando uno slot di concorrentDownloads) per
-  // tutta la sua durata anche se nessuno è più in ascolto dall'altra parte.
-  if (res.destroyed || res.writableEnded) {
-    return;
-  }
-
-  if (!preflight.ok) {
-    sendError(res, 502, `Test rapido fallito: ${preflight.error}`);
-    return;
-  }
-
   const tempPath = path.join(os.tmpdir(), `nuvio-offline-${crypto.randomUUID()}.mkv`);
-  const args = ['-y', ...buildHeaderArgs(headers), '-i', sourceUrl, '-map', '0:v:0', '-map', '0:a:0?', '-c', 'copy', tempPath];
+  const args = ['-y'];
+  if (headers && Object.keys(headers).length) {
+    const headerStr = Object.entries(headers)
+      .map(([k, v]) => `${k}: ${v}`)
+      .join('\r\n') + '\r\n';
+    args.push('-headers', headerStr);
+  }
+  args.push('-i', sourceUrl, '-map', '0:v:0', '-map', '0:a:0?', '-c', 'copy', tempPath);
 
   let ff;
   try {
     ff = spawn('ffmpeg', args);
   } catch {
-    sendError(res, 500, 'ffmpeg non è installato o non è nel PATH');
+    res.status(500).json({ error: 'ffmpeg non è installato o non è nel PATH' });
     return;
   }
 
@@ -273,8 +167,6 @@ async function streamHls(sourceUrl, headers, filename, res) {
   let lastSize = 0;
   let stalledSince = Date.now();
   let stalled = false;
-  let maxDurationExceeded = false;
-  const startedAt = Date.now();
   const stallCheck = setInterval(() => {
     const size = fileSize(tempPath);
     if (size > lastSize) {
@@ -282,13 +174,6 @@ async function streamHls(sourceUrl, headers, filename, res) {
       stalledSince = Date.now();
     } else if (Date.now() - stalledSince > STALL_TIMEOUT_MS) {
       stalled = true;
-      ff.kill('SIGKILL');
-    } else if (Date.now() - startedAt > MAX_DOWNLOAD_MS) {
-      // Tetto assoluto di sicurezza: anche se il file continua lentamente a crescere
-      // (quindi non "stallato" in senso stretto), oltre questa soglia lo interrompiamo
-      // comunque, cosi' lo slot di concorrenza non puo' restare occupato a tempo
-      // indeterminato per nessun motivo imprevisto.
-      maxDurationExceeded = true;
       ff.kill('SIGKILL');
     }
   }, 2000);
@@ -310,7 +195,11 @@ async function streamHls(sourceUrl, headers, filename, res) {
 
   if (spawnError) {
     await cleanupFile(tempPath);
-    sendError(res, 500, spawnError.code === 'ENOENT' ? 'ffmpeg non è installato o non è nel PATH' : spawnError.message);
+    if (!res.headersSent) {
+      res.status(500).json({
+        error: spawnError.code === 'ENOENT' ? 'ffmpeg non è installato o non è nel PATH' : spawnError.message
+      });
+    }
     return;
   }
 
@@ -320,14 +209,16 @@ async function streamHls(sourceUrl, headers, filename, res) {
     await cleanupFile(tempPath);
     if (res.headersSent || res.writableEnded) return;
     if (stalled) {
-      sendError(res, 504, `Timeout: il download si è bloccato, nessun progresso da ${STALL_TIMEOUT_MS / 1000}s (${finalSize} byte scaricati prima dello stallo)`);
-    } else if (maxDurationExceeded) {
-      sendError(res, 504, `Timeout: superato il limite massimo di ${MAX_DOWNLOAD_MS / 60000} minuti (${finalSize} byte scaricati, troppo lento per essere completato)`);
+      res.status(504).json({
+        error: `Timeout: il download si è bloccato, nessun progresso da ${STALL_TIMEOUT_MS / 1000}s (${finalSize} byte scaricati prima dello stallo)`
+      });
     } else if (exitCode === 0) {
-      sendError(res, 502, `Lo stream si è interrotto dopo soli ${finalSize} byte (fonte vuota, sessione scaduta o non compatibile con un accesso diretto)`);
+      res.status(502).json({
+        error: `Lo stream si è interrotto dopo soli ${finalSize} byte (fonte vuota, sessione scaduta o non compatibile con un accesso diretto)`
+      });
     } else {
-      const tail = meaningfulStderrTail(stderrTail);
-      sendError(res, 502, `ffmpeg terminato con codice ${exitCode}: ${tail || 'errore sconosciuto'}`);
+      const tail = stderrTail.slice(-8).join(' ').slice(0, 400);
+      res.status(502).json({ error: `ffmpeg terminato con codice ${exitCode}: ${tail || 'errore sconosciuto'}` });
     }
     return;
   }
@@ -345,4 +236,4 @@ async function streamHls(sourceUrl, headers, filename, res) {
   }
 }
 
-module.exports = { prepareDownload, streamDownload, sanitizeFilename, detectType, guessExtension, sendError };
+module.exports = { prepareDownload, streamDownload, sanitizeFilename, detectType, guessExtension };

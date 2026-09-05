@@ -67,16 +67,4 @@ function removeAddon(id) {
   return cfg.addons.length !== before;
 }
 
-function updateSettings({ tmdbApiKey, language, concurrentDownloads }) {
-  const cfg = load();
-  if (tmdbApiKey !== undefined) cfg.tmdbApiKey = String(tmdbApiKey).trim();
-  if (language !== undefined) cfg.language = String(language).trim() || DEFAULTS.language;
-  if (concurrentDownloads !== undefined) {
-    const n = parseInt(concurrentDownloads, 10);
-    if (Number.isFinite(n) && n > 0) cfg.concurrentDownloads = n;
-  }
-  save(cfg);
-  return cfg;
-}
-
-module.exports = { get, save, listAddons, addAddon, removeAddon, updateSettings, CONFIG_PATH };
+module.exports = { get, save, listAddons, addAddon, removeAddon, CONFIG_PATH };

@@ -8,67 +8,35 @@
 </head>
 <body>
 <header class="topbar">
-  <div class="logo">
-    <span class="logo-mark">⬇</span>
-    <h1>NUVIO<span>OFFLINE</span></h1>
-  </div>
+  <h1>nuvio<span>offline</span></h1>
   <nav class="tabs">
-    <button class="tab-btn active" data-tab="search">🔍 CERCA</button>
-    <button class="tab-btn" data-tab="settings">⚙ IMPOSTAZIONI</button>
+    <button class="tab-btn active" data-tab="search">Cerca</button>
+    <button class="tab-btn" data-tab="addons">Addon</button>
   </nav>
 </header>
 
 <main>
   <section id="tab-search" class="tab-panel active">
     <form id="search-form" class="search-bar">
-      <input type="text" id="search-input" placeholder="Cerca un film o una serie TV…" autocomplete="off">
-      <button type="submit" class="btn btn-accent">CERCA</button>
+      <input type="text" id="search-input" placeholder="Cerca un film o una serie TV..." autocomplete="off">
+      <button type="submit">Cerca</button>
     </form>
     <div id="search-results" class="grid"></div>
 
     <div id="detail-panel" class="detail-panel" hidden>
-      <button id="detail-back" class="btn btn-ghost">&larr; TORNA AI RISULTATI</button>
+      <button id="detail-back" class="link-btn">&larr; Torna ai risultati</button>
       <div id="detail-content"></div>
     </div>
   </section>
 
-  <section id="tab-settings" class="tab-panel">
-    <div class="panel-block">
-      <h2>🔑 API TMDB</h2>
-      <p class="hint">
-        Serve una API key gratuita di TMDB per la ricerca. Registrati su
-        <strong>themoviedb.org</strong> e generane una da Impostazioni → API.
-      </p>
-      <form id="settings-form" class="settings-form">
-        <label class="field">
-          <span>TMDB API Key</span>
-          <input type="text" id="settings-tmdb-key" placeholder="Incolla qui la tua API key…" autocomplete="off">
-        </label>
-        <label class="field">
-          <span>Lingua risultati</span>
-          <select id="settings-language">
-            <option value="it-IT">Italiano</option>
-            <option value="en-US">English</option>
-          </select>
-        </label>
-        <label class="field">
-          <span>Download simultanei</span>
-          <input type="number" id="settings-concurrent" min="1" max="10" step="1">
-        </label>
-        <button type="submit" class="btn btn-accent">SALVA IMPOSTAZIONI</button>
-      </form>
-    </div>
-
-    <div class="panel-block">
-      <h2>🧩 ADDON STREMIO</h2>
-      <p class="hint">Le fonti di stream interrogate per ogni ricerca.</p>
-      <form id="addon-form" class="addon-form">
-        <input type="text" id="addon-name" placeholder="Nome addon" autocomplete="off">
-        <input type="text" id="addon-url" placeholder="URL manifest.json" autocomplete="off">
-        <button type="submit" class="btn btn-accent">AGGIUNGI</button>
-      </form>
-      <div id="addon-list" class="list"></div>
-    </div>
+  <section id="tab-addons" class="tab-panel">
+    <h2>Addon Stremio</h2>
+    <form id="addon-form" class="addon-form">
+      <input type="text" id="addon-name" placeholder="Nome addon" autocomplete="off">
+      <input type="text" id="addon-url" placeholder="URL manifest.json" autocomplete="off">
+      <button type="submit">Aggiungi</button>
+    </form>
+    <div id="addon-list" class="list"></div>
   </section>
 </main>
 

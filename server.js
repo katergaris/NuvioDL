@@ -72,26 +72,6 @@ app.get('/api/streams', asyncRoute(async (req, res) => {
   res.json({ imdbId, stremioId, streams, errors });
 }));
 
-// ---- Impostazioni ----
-
-app.get('/api/settings', (req, res) => {
-  const current = config.get();
-  res.json({
-    tmdbApiKey: current.tmdbApiKey,
-    language: current.language,
-    concurrentDownloads: current.concurrentDownloads
-  });
-});
-
-app.post('/api/settings', (req, res) => {
-  const updated = config.updateSettings(req.body || {});
-  res.json({
-    tmdbApiKey: updated.tmdbApiKey,
-    language: updated.language,
-    concurrentDownloads: updated.concurrentDownloads
-  });
-});
-
 // ---- Addons CRUD ----
 
 app.get('/api/addons', (req, res) => {
@@ -136,14 +116,14 @@ async function handleDownload(rawData, res) {
   try {
     params = decodeDownloadPayload(rawData);
   } catch {
-    return streamer.sendError(res, 400, 'Parametro data non valido');
+    return res.status(400).json({ error: 'Parametro data non valido' });
   }
 
   let prepared;
   try {
     prepared = streamer.prepareDownload(params);
   } catch (e) {
-    return streamer.sendError(res, e.status || 400, e.message);
+    return res.status(e.status || 400).json({ error: e.message });
   }
 
   await streamer.streamDownload(prepared, res);
@@ -261,17 +241,6 @@ app.use((err, req, res, next) => {
 const httpServer = app.listen(cfg.port, () => {
   console.log(`nuvio-offline in ascolto su http://localhost:${cfg.port}`);
 });
-
-// Node tronca da solo una richiesta che impiega troppo a ricevere risposta completa
-// (requestTimeout, default 5 minuti dalla v18) o una connessione inattiva troppo a lungo
-// (timeout dei socket, storicamente 2 minuti). Un remux HLS completo su un film intero
-// può legittimamente richiedere più di 5 minuti prima di iniziare a rispondere: senza
-// disattivare questi timeout, è lo stesso Node — non la rete, non Tailscale, non il
-// client — a interrompere la connessione, con l'effetto "sito non disponibile" lato
-// browser qualunque sia il dispositivo o il protocollo usato.
-httpServer.requestTimeout = 0;
-httpServer.headersTimeout = 0;
-httpServer.timeout = 0;
 
 // Se il parser HTTP di Node riceve una richiesta malformata (es. un URL con byte grezzi
 // non percent-encoded), la rifiuta PRIMA che arrivi alle route Express: senza questo

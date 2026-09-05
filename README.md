@@ -144,13 +144,11 @@ nella lista degli stream.
   film intero può volerci qualche minuto prima che compaia.
 - Se un file diretto fallisce **dopo** che il download è già iniziato (es. connessione
   persa a metà), il browser mostrerà un download interrotto/incompleto: va riavviato.
-- Per l'HLS, prima del remux completo viene fatto un **test rapido** (pochi secondi, un
-  campione minimo di dati): se la fonte è morta/vuota lo si scopre in pochi secondi invece
-  che dopo un'attesa lunga. Se il test passa ma poi la sorgente smette di produrre dati
-  per **30 secondi consecutivi** durante il remux vero e proprio (sessione scaduta a metà,
-  connessione persa), il download viene comunque interrotto con un errore leggibile.
-- Se la sorgente non risponde affatto entro **30 secondi** (host lento/irraggiungibile),
-  il download viene interrotto con un errore invece di restare bloccato.
+- Se la sorgente non risponde entro **30 secondi** (host lento/irraggiungibile) o smette
+  di produrre dati per **30 secondi consecutivi** durante il remux HLS (stream vuoto,
+  sessione scaduta, relay che risponde ma senza contenuto reale), il download viene
+  interrotto con un errore leggibile invece di restare bloccato o produrre un file
+  inutile di poche centinaia di byte.
 - Alcuni CDN legano l'URL firmato dello stream all'IP (e talvolta al Referer) di chi lo
   ha generato — nel nostro caso il device dove gira Nuvio. Se il nostro server prova a
   scaricarlo da un IP diverso, il CDN può rispondere 403 anche inoltrando gli stessi
