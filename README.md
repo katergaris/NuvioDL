@@ -107,13 +107,17 @@ niente più bisogno di cercare separatamente nella web UI.
    `http://<ip-o-host-della-rpi>:4321/manifest.json`
 2. Cerca un titolo in Nuvio come al solito: tra gli stream trovati vedrai anche le voci
    "⬇️ Scarica offline" prodotte da nuvio-offline.
-3. Selezionandone una, l'addon usa `externalUrl` (invece di `url`): Nuvio dovrebbe aprirla
-   nel browser esterno del device invece di riprodurla internamente — è lì che parte il
-   download, stesso meccanismo della web UI.
+3. Selezionandone una, l'addon espone un `url` che punta a `/api/download/...`: dal punto
+   di vista di Nuvio è un normale link video diretto (risponde con Content-Type/
+   Content-Length/Content-Disposition validi una volta pronto), quindi il **download
+   nativo di Nuvio** dovrebbe riconoscerlo e scaricarlo da solo sul device, senza passare
+   dal browser esterno.
 
-> Non è garantito che ogni app "addon-compatible" rispetti `externalUrl` esattamente come
-> Stremio ufficiale: è lo standard previsto dal protocollo, ma vale la pena verificarlo con
-> un test rapido dopo l'installazione.
+> Il link ha un'estensione (`.mp4`/`.mkv`) nel percorso apposta: alcune app, incluso
+> probabilmente Nuvio, decidono se un link è "un file diretto scaricabile" guardando
+> l'estensione nell'URL. Per l'HLS, il link risponde solo a remux completato sul
+> server — per un film intero il download nativo potrebbe restare "in attesa" per
+> qualche minuto prima di iniziare a ricevere dati.
 
 ## Note su header/proxy degli stream
 
@@ -186,3 +190,4 @@ public/                # frontend statico (HTML/CSS/JS vanilla)
 | GET    | `/api/download?data=`               | Avvia lo streaming del download (`data` è un JSON URL-encoded con `sourceUrl`, `headers`, `title`, ecc.) |
 | GET    | `/manifest.json`                    | Manifest addon Stremio/Nuvio                |
 | GET    | `/stream/:type/:id.json`            | Stream "scaricabili" per l'addon (protocollo Stremio) |
+| GET    | `/api/download/:data/:filename`     | Come sopra, con estensione nel path (usato dai link generati per l'addon) |

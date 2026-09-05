@@ -111,10 +111,10 @@ function encodeDownloadPayload(payload) {
   return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
 }
 
-app.get('/api/download', asyncRoute(async (req, res) => {
+async function handleDownload(rawData, res) {
   let params;
   try {
-    params = decodeDownloadPayload(req.query.data);
+    params = decodeDownloadPayload(rawData);
   } catch {
     return res.status(400).json({ error: 'Parametro data non valido' });
   }
@@ -127,16 +127,30 @@ app.get('/api/download', asyncRoute(async (req, res) => {
   }
 
   await streamer.streamDownload(prepared, res);
+}
+
+// Formato con estensione nel path (es. /api/download/<dati>/Titolo.mkv): alcune app,
+// incluso il download nativo di Nuvio, decidono se un link è "un file diretto scaricabile"
+// guardando l'estensione nell'URL — un endpoint puramente query-string come
+// /api/download?data=... non ne ha nessuna e viene scartato. Il segmento finale è solo
+// cosmetico: il nome file vero per l'header Content-Disposition è ricalcolato lato server.
+app.get('/api/download/:data/:filename', asyncRoute(async (req, res) => {
+  await handleDownload(req.params.data, res);
+}));
+
+app.get('/api/download', asyncRoute(async (req, res) => {
+  await handleDownload(req.query.data, res);
 }));
 
 // ---- Stremio/Nuvio addon (nuvio-offline installata come addon dentro Nuvio) ----
 //
 // Espone questo stesso server come addon: quando Nuvio interroga /stream/:type/:id.json,
 // nuvio-offline ri-interroga gli addon "sorgente" configurati (stessa logica di
-// /api/streams), tiene solo gli stream scaricabili e li restituisce come voci con
-// `externalUrl` puntato a /api/download. Nuvio, per una entry con externalUrl invece di
-// url/infoHash, apre il link nel browser esterno anziché riprodurlo internamente: è lì
-// che parte il download diretto sul dispositivo.
+// /api/streams), tiene solo gli stream scaricabili e li restituisce come voci con `url`
+// puntato a /api/download/... — un link che si comporta come un normale file video diretto
+// (risponde con Content-Type/Content-Length/Content-Disposition validi una volta pronto),
+// così il download nativo di Nuvio lo riconosce e lo scarica da solo sul device, senza
+// passare dal browser esterno.
 
 const ADDON_ID = 'org.nuvio-offline';
 
@@ -197,11 +211,15 @@ app.get('/stream/:type/:id.json', addonCors, asyncRoute(async (req, res) => {
       streamTitle: s.title,
       title: label
     };
-    const downloadUrl = `${base}/api/download?data=${encodeDownloadPayload(payload)}`;
+    const streamType = streamer.detectType(s.url);
+    const ext = streamType === 'hls' ? '.mkv' : streamer.guessExtension(s.url);
+    const cosmeticFilename = encodeURIComponent(`${label}${ext}`);
+    const downloadUrl = `${base}/api/download/${encodeDownloadPayload(payload)}/${cosmeticFilename}`;
     return {
       name: '⬇️ Scarica offline',
       title: `${s.title}\n${s.addonName}`,
-      externalUrl: downloadUrl
+      url: downloadUrl,
+      behaviorHints: { filename: `${label}${ext}` }
     };
   });
 

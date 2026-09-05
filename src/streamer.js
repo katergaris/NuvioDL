@@ -236,4 +236,4 @@ async function streamHls(sourceUrl, headers, filename, res) {
   }
 }
 
-module.exports = { prepareDownload, streamDownload, sanitizeFilename };
+module.exports = { prepareDownload, streamDownload, sanitizeFilename, detectType, guessExtension };
