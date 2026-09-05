@@ -136,14 +136,14 @@ async function handleDownload(rawData, res) {
   try {
     params = decodeDownloadPayload(rawData);
   } catch {
-    return res.status(400).json({ error: 'Parametro data non valido' });
+    return streamer.sendError(res, 400, 'Parametro data non valido');
   }
 
   let prepared;
   try {
     prepared = streamer.prepareDownload(params);
   } catch (e) {
-    return res.status(e.status || 400).json({ error: e.message });
+    return streamer.sendError(res, e.status || 400, e.message);
   }
 
   await streamer.streamDownload(prepared, res);

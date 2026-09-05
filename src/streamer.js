@@ -44,6 +44,22 @@ function contentDisposition(filename) {
   return `attachment; filename="${ascii}"; filename*=UTF-8''${utf8}`;
 }
 
+// Il download nativo di Nuvio (e il tasto "Scarica" della web UI) non controllano lo
+// status HTTP: salvano comunque qualunque cosa arrivi sul link. Un errore in JSON
+// finirebbe scaricato come un file "download.json" incomprensibile. Rispondendo invece
+// con testo semplice e un nome file esplicito, l'utente può aprire il file scaricato e
+// leggere subito il motivo del fallimento.
+function sendError(res, status, message) {
+  if (res.headersSent) {
+    res.end();
+    return;
+  }
+  res.status(status);
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="ERRORE-download.txt"');
+  res.send(`DOWNLOAD NON RIUSCITO\n\n${message}`);
+}
+
 function prepareDownload({ sourceUrl, headers, title, streamTitle }) {
   if (!sourceUrl || /^magnet:/i.test(sourceUrl)) {
     const err = new Error('Stream non supportato: nessun URL diretto disponibile (solo infoHash/torrent)');
@@ -58,7 +74,7 @@ function prepareDownload({ sourceUrl, headers, title, streamTitle }) {
 
 async function streamDownload({ sourceUrl, headers, filename, type }, res) {
   if (active >= (config.get().concurrentDownloads || 1)) {
-    res.status(429).json({ error: 'Troppi download in corso, riprova tra poco' });
+    sendError(res, 429, 'Troppi download in corso, riprova tra poco');
     return;
   }
   active++;
@@ -85,7 +101,7 @@ async function streamDirect(sourceUrl, headers, filename, res) {
     const message = e.name === 'AbortError'
       ? `Timeout: lo stream non ha risposto entro ${FIRST_BYTE_TIMEOUT_MS / 1000}s`
       : `Impossibile contattare lo stream: ${e.message}`;
-    res.status(502).json({ error: message });
+    sendError(res, 502, message);
     return;
   }
   clearTimeout(timeoutTimer);
@@ -101,7 +117,7 @@ async function streamDirect(sourceUrl, headers, filename, res) {
   }
 
   if (!upstream.ok) {
-    res.status(502).json({ error: `Il server dello stream ha risposto ${upstream.status} ${upstream.statusText}` });
+    sendError(res, 502, `Il server dello stream ha risposto ${upstream.status} ${upstream.statusText}`);
     return;
   }
 
@@ -205,7 +221,7 @@ async function preflightCheck(sourceUrl, headers) {
 async function streamHls(sourceUrl, headers, filename, res) {
   const preflight = await preflightCheck(sourceUrl, headers);
   if (!preflight.ok) {
-    res.status(502).json({ error: `Test rapido fallito: ${preflight.error}` });
+    sendError(res, 502, `Test rapido fallito: ${preflight.error}`);
     return;
   }
 
@@ -216,7 +232,7 @@ async function streamHls(sourceUrl, headers, filename, res) {
   try {
     ff = spawn('ffmpeg', args);
   } catch {
-    res.status(500).json({ error: 'ffmpeg non è installato o non è nel PATH' });
+    sendError(res, 500, 'ffmpeg non è installato o non è nel PATH');
     return;
   }
 
@@ -258,11 +274,7 @@ async function streamHls(sourceUrl, headers, filename, res) {
 
   if (spawnError) {
     await cleanupFile(tempPath);
-    if (!res.headersSent) {
-      res.status(500).json({
-        error: spawnError.code === 'ENOENT' ? 'ffmpeg non è installato o non è nel PATH' : spawnError.message
-      });
-    }
+    sendError(res, 500, spawnError.code === 'ENOENT' ? 'ffmpeg non è installato o non è nel PATH' : spawnError.message);
     return;
   }
 
@@ -272,16 +284,12 @@ async function streamHls(sourceUrl, headers, filename, res) {
     await cleanupFile(tempPath);
     if (res.headersSent || res.writableEnded) return;
     if (stalled) {
-      res.status(504).json({
-        error: `Timeout: il download si è bloccato, nessun progresso da ${STALL_TIMEOUT_MS / 1000}s (${finalSize} byte scaricati prima dello stallo)`
-      });
+      sendError(res, 504, `Timeout: il download si è bloccato, nessun progresso da ${STALL_TIMEOUT_MS / 1000}s (${finalSize} byte scaricati prima dello stallo)`);
     } else if (exitCode === 0) {
-      res.status(502).json({
-        error: `Lo stream si è interrotto dopo soli ${finalSize} byte (fonte vuota, sessione scaduta o non compatibile con un accesso diretto)`
-      });
+      sendError(res, 502, `Lo stream si è interrotto dopo soli ${finalSize} byte (fonte vuota, sessione scaduta o non compatibile con un accesso diretto)`);
     } else {
       const tail = stderrTail.slice(-8).join(' ').slice(0, 400);
-      res.status(502).json({ error: `ffmpeg terminato con codice ${exitCode}: ${tail || 'errore sconosciuto'}` });
+      sendError(res, 502, `ffmpeg terminato con codice ${exitCode}: ${tail || 'errore sconosciuto'}`);
     }
     return;
   }
@@ -299,4 +307,4 @@ async function streamHls(sourceUrl, headers, filename, res) {
   }
 }
 
-module.exports = { prepareDownload, streamDownload, sanitizeFilename, detectType, guessExtension };
+module.exports = { prepareDownload, streamDownload, sanitizeFilename, detectType, guessExtension, sendError };
