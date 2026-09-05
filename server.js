@@ -72,6 +72,26 @@ app.get('/api/streams', asyncRoute(async (req, res) => {
   res.json({ imdbId, stremioId, streams, errors });
 }));
 
+// ---- Impostazioni ----
+
+app.get('/api/settings', (req, res) => {
+  const current = config.get();
+  res.json({
+    tmdbApiKey: current.tmdbApiKey,
+    language: current.language,
+    concurrentDownloads: current.concurrentDownloads
+  });
+});
+
+app.post('/api/settings', (req, res) => {
+  const updated = config.updateSettings(req.body || {});
+  res.json({
+    tmdbApiKey: updated.tmdbApiKey,
+    language: updated.language,
+    concurrentDownloads: updated.concurrentDownloads
+  });
+});
+
 // ---- Addons CRUD ----
 
 app.get('/api/addons', (req, res) => {
