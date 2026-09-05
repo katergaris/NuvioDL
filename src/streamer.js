@@ -14,6 +14,7 @@ const MIN_SUCCESS_BYTES = 256 * 1024;
 const PREFLIGHT_DURATION_SEC = 3;
 const PREFLIGHT_TIMEOUT_MS = 15000;
 const PREFLIGHT_MIN_BYTES = 32 * 1024;
+const MAX_DOWNLOAD_MS = 20 * 60 * 1000;
 
 let active = 0;
 
@@ -223,6 +224,16 @@ async function preflightCheck(sourceUrl, headers) {
 // nulla in modo permanente sulla RPi.
 async function streamHls(sourceUrl, headers, filename, res) {
   const preflight = await preflightCheck(sourceUrl, headers);
+
+  // Il preflight può richiedere fino a 15s durante i quali non c'è ancora nessun
+  // listener che aborta il remux completo se il client si disconnette. Senza questo
+  // controllo, un client ormai assente non impedirebbe comunque la partenza del remux
+  // completo, che resterebbe "attivo" (occupando uno slot di concorrentDownloads) per
+  // tutta la sua durata anche se nessuno è più in ascolto dall'altra parte.
+  if (res.destroyed || res.writableEnded) {
+    return;
+  }
+
   if (!preflight.ok) {
     sendError(res, 502, `Test rapido fallito: ${preflight.error}`);
     return;
@@ -249,6 +260,8 @@ async function streamHls(sourceUrl, headers, filename, res) {
   let lastSize = 0;
   let stalledSince = Date.now();
   let stalled = false;
+  let maxDurationExceeded = false;
+  const startedAt = Date.now();
   const stallCheck = setInterval(() => {
     const size = fileSize(tempPath);
     if (size > lastSize) {
@@ -256,6 +269,13 @@ async function streamHls(sourceUrl, headers, filename, res) {
       stalledSince = Date.now();
     } else if (Date.now() - stalledSince > STALL_TIMEOUT_MS) {
       stalled = true;
+      ff.kill('SIGKILL');
+    } else if (Date.now() - startedAt > MAX_DOWNLOAD_MS) {
+      // Tetto assoluto di sicurezza: anche se il file continua lentamente a crescere
+      // (quindi non "stallato" in senso stretto), oltre questa soglia lo interrompiamo
+      // comunque, cosi' lo slot di concorrenza non puo' restare occupato a tempo
+      // indeterminato per nessun motivo imprevisto.
+      maxDurationExceeded = true;
       ff.kill('SIGKILL');
     }
   }, 2000);
@@ -288,6 +308,8 @@ async function streamHls(sourceUrl, headers, filename, res) {
     if (res.headersSent || res.writableEnded) return;
     if (stalled) {
       sendError(res, 504, `Timeout: il download si è bloccato, nessun progresso da ${STALL_TIMEOUT_MS / 1000}s (${finalSize} byte scaricati prima dello stallo)`);
+    } else if (maxDurationExceeded) {
+      sendError(res, 504, `Timeout: superato il limite massimo di ${MAX_DOWNLOAD_MS / 60000} minuti (${finalSize} byte scaricati, troppo lento per essere completato)`);
     } else if (exitCode === 0) {
       sendError(res, 502, `Lo stream si è interrotto dopo soli ${finalSize} byte (fonte vuota, sessione scaduta o non compatibile con un accesso diretto)`);
     } else {
