@@ -47,16 +47,19 @@ function contentDisposition(filename) {
 // Il download nativo di Nuvio (e il tasto "Scarica" della web UI) non controllano lo
 // status HTTP: salvano comunque qualunque cosa arrivi sul link. Un errore in JSON
 // finirebbe scaricato come un file "download.json" incomprensibile. Rispondendo invece
-// con testo semplice e un nome file esplicito, l'utente può aprire il file scaricato e
-// leggere subito il motivo del fallimento.
+// con testo semplice e un nome file che contiene già un pezzo del motivo del
+// fallimento, l'utente capisce cosa è successo anche solo guardando l'elenco dei
+// download, senza doverlo aprire.
 function sendError(res, status, message) {
   if (res.headersSent) {
     res.end();
     return;
   }
+  const snippet = sanitizeFilename(message.split('\n')[0].slice(0, 80)) || 'errore sconosciuto';
+  const filename = `ERRORE ${status} - ${snippet}.txt`;
   res.status(status);
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-  res.setHeader('Content-Disposition', 'attachment; filename="ERRORE-download.txt"');
+  res.setHeader('Content-Disposition', contentDisposition(filename));
   res.send(`DOWNLOAD NON RIUSCITO\n\n${message}`);
 }
 
