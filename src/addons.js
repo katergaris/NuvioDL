@@ -1,6 +1,12 @@
 const TMDB_BASE = 'https://api.themoviedb.org/3';
 const IMAGE_BASE = 'https://image.tmdb.org/t/p/w200';
 const FETCH_TIMEOUT_MS = 10000;
+// Alcuni addon girano su hosting gratuiti (es. Render.com) che vanno in sospensione
+// quando inattivi: la prima richiesta dopo un periodo di inattività può richiedere
+// molti secondi solo per "risvegliare" il servizio, prima ancora di rispondere nel
+// merito. Un timeout troppo stretto qui segnala "timeout" per addon che sono solo
+// lenti a ripartire, non davvero morti.
+const ADDON_QUERY_TIMEOUT_MS = 25000;
 
 function withTimeout(promise, ms) {
   const controller = new AbortController();
@@ -113,7 +119,7 @@ async function queryAddonStreams(addon, stremioType, stremioId) {
   const base = addonBaseUrl(addon.manifestUrl);
   const url = `${base}/stream/${stremioType}/${encodeURIComponent(stremioId).replace(/%3A/g, ':')}.json`;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), ADDON_QUERY_TIMEOUT_MS);
   try {
     const res = await fetch(url, { signal: controller.signal });
     clearTimeout(timer);
