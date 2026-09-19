@@ -342,6 +342,7 @@ async function loadSettings() {
     $('#settings-tmdb-key').value = settings.tmdbApiKey || '';
     $('#settings-language').value = settings.language || 'it-IT';
     $('#settings-concurrent').value = settings.concurrentDownloads || 2;
+    $('#settings-addon-timeout').value = Math.round((settings.addonTimeoutMs || 60000) / 1000);
   } catch (e) {
     toast(e.message, true);
   }
@@ -356,7 +357,8 @@ function initSettingsForm() {
         body: JSON.stringify({
           tmdbApiKey: $('#settings-tmdb-key').value.trim(),
           language: $('#settings-language').value,
-          concurrentDownloads: $('#settings-concurrent').value
+          concurrentDownloads: $('#settings-concurrent').value,
+          addonTimeoutMs: parseInt($('#settings-addon-timeout').value, 10) * 1000
         })
       });
       toast('Impostazioni salvate');

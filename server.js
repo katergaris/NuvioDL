@@ -80,7 +80,8 @@ app.get('/api/settings', (req, res) => {
   res.json({
     tmdbApiKey: current.tmdbApiKey,
     language: current.language,
-    concurrentDownloads: current.concurrentDownloads
+    concurrentDownloads: current.concurrentDownloads,
+    addonTimeoutMs: current.addonTimeoutMs
   });
 });
 
@@ -89,7 +90,8 @@ app.post('/api/settings', (req, res) => {
   res.json({
     tmdbApiKey: updated.tmdbApiKey,
     language: updated.language,
-    concurrentDownloads: updated.concurrentDownloads
+    concurrentDownloads: updated.concurrentDownloads,
+    addonTimeoutMs: updated.addonTimeoutMs
   });
 });
 

@@ -2,6 +2,13 @@ const TMDB_BASE = 'https://api.themoviedb.org/3';
 const IMAGE_BASE = 'https://image.tmdb.org/t/p/w200';
 const FETCH_TIMEOUT_MS = 30000;
 
+const config = require('./config');
+
+function addonTimeoutMs() {
+  const t = parseInt(config.get().addonTimeoutMs, 10);
+  return Number.isFinite(t) && t >= 5000 ? t : 60000;
+}
+
 function withTimeout(promise, ms) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
@@ -116,7 +123,7 @@ async function queryAddonStreams(addon, stremioType, stremioId) {
   const base = addonBaseUrl(addon.manifestUrl);
   const url = `${base}/stream/${stremioType}/${encodeURIComponent(stremioId).replace(/%3A/g, ':')}.json`;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), addonTimeoutMs());
   try {
     const res = await fetch(url, { signal: controller.signal });
     clearTimeout(timer);

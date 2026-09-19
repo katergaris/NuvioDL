@@ -3,5 +3,6 @@
   "language": "it-IT",
   "port": 4321,
   "concurrentDownloads": 2,
+  "addonTimeoutMs": 60000,
   "addons": []
 }
