@@ -1,8 +1,5 @@
-const fs = require('fs');
-const os = require('os');
 const path = require('path');
-const crypto = require('crypto');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const { pipeline } = require('stream/promises');
 const { Readable } = require('stream');
 
@@ -10,7 +7,6 @@ const config = require('./config');
 
 const FIRST_BYTE_TIMEOUT_MS = 30000;
 const STALL_TIMEOUT_MS = 30000;
-const MIN_SUCCESS_BYTES = 256 * 1024;
 
 let active = 0;
 
@@ -119,27 +115,25 @@ async function streamDirect(sourceUrl, headers, filename, res) {
   }
 }
 
-async function cleanupFile(filePath) {
-  await fs.promises.unlink(filePath).catch(() => {});
-}
-
-function fileSize(filePath) {
-  try {
-    return fs.statSync(filePath).size;
-  } catch {
-    return 0;
+let ffmpegOk = null;
+function ffmpegAvailable() {
+  if (ffmpegOk === null) {
+    ffmpegOk = !spawnSync('ffmpeg', ['-version']).error;
   }
+  return ffmpegOk;
 }
 
-// Scrivere l'output remuxato di ffmpeg direttamente su pipe:1 (stdout) e inoltrarlo in
-// streaming produceva in certi ambienti solo l'intestazione del contenitore (poche
-// centinaia di byte) e poi si interrompeva, anche quando la stessa identica sorgente
-// scaricata scrivendo su un file reale funzionava perfettamente. Per questo ffmpeg scrive
-// qui su un file temporaneo (come nella versione che funzionava), e solo a remux completo
-// il file viene inoltrato al client — cancellato subito dopo, quindi non si accumula mai
-// nulla in modo permanente sulla RPi.
+// Remux HLS -> MKV in streaming: l'output di ffmpeg viene inoltrato al client man mano
+// che viene prodotto, invece di bufferizzare l'intero file su disco prima di rispondere.
+// È necessario perché il download nativo di Nuvio (e diversi browser) abbandona se non
+// riceve il primo byte entro pochi secondi: con un remux "buffer-first" l'intero contenuto
+// restava in attesa per minuti e il download non partiva mai.
 async function streamHls(sourceUrl, headers, filename, res) {
-  const tempPath = path.join(os.tmpdir(), `nuvio-offline-${crypto.randomUUID()}.mkv`);
+  if (!ffmpegAvailable()) {
+    res.status(500).json({ error: 'ffmpeg non è installato o non è nel PATH' });
+    return;
+  }
+
   const args = ['-y'];
   if (headers && Object.keys(headers).length) {
     const headerStr = Object.entries(headers)
@@ -147,93 +141,57 @@ async function streamHls(sourceUrl, headers, filename, res) {
       .join('\r\n') + '\r\n';
     args.push('-headers', headerStr);
   }
-  args.push('-i', sourceUrl, '-map', '0:v:0', '-map', '0:a:0?', '-c', 'copy', tempPath);
+  args.push(
+    '-i', sourceUrl,
+    '-map', '0:v:0',
+    '-map', '0:a:0?',
+    // L'audio viene ricodificato (non copiato) perché diversi stream HLS (es. css /
+    // StreamingCommunity) hanno extradata AAC malformato: con "-c:a copy" ffmpeg fallisce
+    // con "Error parsing AAC extradata, unable to determine samplerate" e non produce nulla.
+    '-c:v', 'copy',
+    '-c:a', 'aac',
+    '-f', 'matroska',
+    '-flush_packets', '1',
+    'pipe:1'
+  );
 
-  let ff;
-  try {
-    ff = spawn('ffmpeg', args);
-  } catch {
-    res.status(500).json({ error: 'ffmpeg non è installato o non è nel PATH' });
-    return;
-  }
+  const ff = spawn('ffmpeg', args);
 
-  let stderrTail = [];
-  ff.stderr.on('data', chunk => {
-    const text = chunk.toString();
-    stderrTail.push(...text.split('\n').filter(Boolean));
-    if (stderrTail.length > 40) stderrTail = stderrTail.slice(-40);
-  });
+  // Manda subito gli header: da qui in poi il client vede un download "attivo" con
+  // progresso reale invece di restare appeso in attesa del remux completo.
+  res.setHeader('Content-Type', 'video/x-matroska');
+  res.setHeader('Content-Disposition', contentDisposition(filename));
+  res.flushHeaders();
 
+  let bytes = 0;
   let lastSize = 0;
   let stalledSince = Date.now();
-  let stalled = false;
   const stallCheck = setInterval(() => {
-    const size = fileSize(tempPath);
-    if (size > lastSize) {
-      lastSize = size;
+    if (bytes > lastSize) {
+      lastSize = bytes;
       stalledSince = Date.now();
     } else if (Date.now() - stalledSince > STALL_TIMEOUT_MS) {
-      stalled = true;
       ff.kill('SIGKILL');
     }
   }, 2000);
 
   const onClientAbort = () => ff.kill('SIGKILL');
   res.on('close', onClientAbort);
+  res.on('error', () => {}); // assorbe errori di scrittura dopo la disconnessione del client
 
-  let spawnError = null;
-  const exitCode = await new Promise(resolve => {
-    ff.on('error', err => {
-      spawnError = err;
-      resolve(null);
-    });
-    ff.on('close', code => resolve(code));
+  ff.stderr.on('data', () => {}); // consuma il log per non riempire il buffer di stderr
+
+  ff.stdout.on('data', chunk => { bytes += chunk.length; });
+  ff.stdout.pipe(res);
+
+  await new Promise(resolve => {
+    ff.on('error', resolve);
+    ff.on('close', resolve);
   });
 
   clearInterval(stallCheck);
   res.removeListener('close', onClientAbort);
-
-  if (spawnError) {
-    await cleanupFile(tempPath);
-    if (!res.headersSent) {
-      res.status(500).json({
-        error: spawnError.code === 'ENOENT' ? 'ffmpeg non è installato o non è nel PATH' : spawnError.message
-      });
-    }
-    return;
-  }
-
-  const finalSize = fileSize(tempPath);
-
-  if (finalSize < MIN_SUCCESS_BYTES) {
-    await cleanupFile(tempPath);
-    if (res.headersSent || res.writableEnded) return;
-    if (stalled) {
-      res.status(504).json({
-        error: `Timeout: il download si è bloccato, nessun progresso da ${STALL_TIMEOUT_MS / 1000}s (${finalSize} byte scaricati prima dello stallo)`
-      });
-    } else if (exitCode === 0) {
-      res.status(502).json({
-        error: `Lo stream si è interrotto dopo soli ${finalSize} byte (fonte vuota, sessione scaduta o non compatibile con un accesso diretto)`
-      });
-    } else {
-      const tail = stderrTail.slice(-8).join(' ').slice(0, 400);
-      res.status(502).json({ error: `ffmpeg terminato con codice ${exitCode}: ${tail || 'errore sconosciuto'}` });
-    }
-    return;
-  }
-
-  res.setHeader('Content-Disposition', contentDisposition(filename));
-  res.setHeader('Content-Type', 'video/x-matroska');
-  res.setHeader('Content-Length', finalSize);
-
-  try {
-    await pipeline(fs.createReadStream(tempPath), res);
-  } catch {
-    // client disconnesso durante l'invio del file, nessun problema
-  } finally {
-    await cleanupFile(tempPath);
-  }
+  if (!res.writableEnded) res.end();
 }
 
 module.exports = { prepareDownload, streamDownload, sanitizeFilename, detectType, guessExtension };
