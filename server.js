@@ -8,6 +8,8 @@ const extractor = require('./src/extractor');
 
 const cfg = config.get();
 
+const APP_VERSION = '1.2.0';
+
 const app = express();
 
 app.use((req, res, next) => {
@@ -81,7 +83,8 @@ app.get('/api/settings', (req, res) => {
     tmdbApiKey: current.tmdbApiKey,
     language: current.language,
     concurrentDownloads: current.concurrentDownloads,
-    addonTimeoutMs: current.addonTimeoutMs
+    addonTimeoutMs: current.addonTimeoutMs,
+    version: APP_VERSION
   });
 });
 
@@ -91,7 +94,8 @@ app.post('/api/settings', (req, res) => {
     tmdbApiKey: updated.tmdbApiKey,
     language: updated.language,
     concurrentDownloads: updated.concurrentDownloads,
-    addonTimeoutMs: updated.addonTimeoutMs
+    addonTimeoutMs: updated.addonTimeoutMs,
+    version: APP_VERSION
   });
 });
 
@@ -279,7 +283,7 @@ app.use((err, req, res, next) => {
 });
 
 const httpServer = app.listen(cfg.port, () => {
-  console.log(`nuvio-offline in ascolto su http://localhost:${cfg.port}`);
+  console.log(`nuvio-offline v${APP_VERSION} in ascolto su http://localhost:${cfg.port}`);
 });
 
 // Node tronca da solo una richiesta che impiega troppo a ricevere risposta completa

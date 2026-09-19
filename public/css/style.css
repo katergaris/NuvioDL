@@ -93,6 +93,19 @@ body {
 
 .tabs { display: flex; gap: 10px; flex-wrap: wrap; }
 
+.version-badge {
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--ink-dim);
+  background: var(--surface);
+  border: var(--bw) solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 10px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
 .tab-btn {
   font-family: inherit;
   font-weight: 800;

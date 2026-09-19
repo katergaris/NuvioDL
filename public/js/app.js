@@ -368,9 +368,21 @@ function initSettingsForm() {
   });
 }
 
+async function loadVersion() {
+  const el = $('#app-version');
+  if (!el) return;
+  try {
+    const settings = await api('/settings');
+    el.textContent = `v${settings.version || '?'}`;
+  } catch {
+    el.textContent = 'v?';
+  }
+}
+
 // ---- Init ----
 
 initTabs();
 initSearch();
 initAddonForm();
 initSettingsForm();
+loadVersion();
