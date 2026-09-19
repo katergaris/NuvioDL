@@ -10,6 +10,7 @@ const DEFAULTS = {
   language: 'it-IT',
   port: 4321,
   concurrentDownloads: 2,
+  addonTimeoutMs: 60000,
   addons: []
 };
 
@@ -67,13 +68,17 @@ function removeAddon(id) {
   return cfg.addons.length !== before;
 }
 
-function updateSettings({ tmdbApiKey, language, concurrentDownloads }) {
+function updateSettings({ tmdbApiKey, language, concurrentDownloads, addonTimeoutMs }) {
   const cfg = load();
   if (tmdbApiKey !== undefined) cfg.tmdbApiKey = String(tmdbApiKey).trim();
   if (language !== undefined) cfg.language = String(language).trim() || 'it-IT';
   if (concurrentDownloads !== undefined) {
     const n = parseInt(concurrentDownloads, 10);
     if (Number.isFinite(n) && n > 0) cfg.concurrentDownloads = n;
+  }
+  if (addonTimeoutMs !== undefined) {
+    const n = parseInt(addonTimeoutMs, 10);
+    if (Number.isFinite(n) && n >= 5000) cfg.addonTimeoutMs = n;
   }
   save(cfg);
   return cfg;

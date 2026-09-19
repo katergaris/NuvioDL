@@ -1,6 +1,13 @@
 const TMDB_BASE = 'https://api.themoviedb.org/3';
 const IMAGE_BASE = 'https://image.tmdb.org/t/p/w200';
-const FETCH_TIMEOUT_MS = 10000;
+const FETCH_TIMEOUT_MS = 30000;
+
+const config = require('./config');
+
+function addonTimeoutMs() {
+  const t = parseInt(config.get().addonTimeoutMs, 10);
+  return Number.isFinite(t) && t >= 5000 ? t : 60000;
+}
 
 function withTimeout(promise, ms) {
   const controller = new AbortController();
@@ -106,14 +113,17 @@ function addonBaseUrl(manifestUrl) {
 }
 
 function isSupportedStream(s) {
-  return !!s.url && !/^magnet:/i.test(s.url);
+  // Supporta sia gli stream con `url` diretto (mp4/mkv/m3u8) sia quelli che
+  // espongono solo un `externalUrl` (addon "scraper" tipo Toastflix), risolvibile
+  // lato server da src/extractor.js. Restano esclusi i torrent (solo infoHash).
+  return (!!s.url || !!s.externalUrl) && !/^magnet:/i.test(s.url || '');
 }
 
 async function queryAddonStreams(addon, stremioType, stremioId) {
   const base = addonBaseUrl(addon.manifestUrl);
   const url = `${base}/stream/${stremioType}/${encodeURIComponent(stremioId).replace(/%3A/g, ':')}.json`;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), addonTimeoutMs());
   try {
     const res = await fetch(url, { signal: controller.signal });
     clearTimeout(timer);
@@ -127,6 +137,7 @@ async function queryAddonStreams(addon, stremioType, stremioId) {
       name: s.name || null,
       title: s.title || s.description || s.name || 'Stream',
       url: s.url || null,
+      externalUrl: s.externalUrl || null,
       infoHash: s.infoHash || null,
       headers: (s.behaviorHints && s.behaviorHints.proxyHeaders && s.behaviorHints.proxyHeaders.request) || null,
       suggestedFilename: (s.behaviorHints && s.behaviorHints.filename) || null,
