@@ -253,6 +253,7 @@ function downloadStream(stream, title, mediaType) {
   const payload = {
     addonName: stream.addonName,
     sourceUrl: stream.url,
+    externalUrl: stream.externalUrl,
     infoHash: stream.infoHash,
     headers: stream.headers,
     streamTitle: stream.title,

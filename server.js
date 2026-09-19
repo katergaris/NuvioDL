@@ -4,6 +4,7 @@ const path = require('path');
 const config = require('./src/config');
 const addons = require('./src/addons');
 const streamer = require('./src/streamer');
+const extractor = require('./src/extractor');
 
 const cfg = config.get();
 
@@ -139,6 +140,19 @@ async function handleDownload(rawData, res) {
     return res.status(400).json({ error: 'Parametro data non valido' });
   }
 
+  // Stream "scraper" (solo externalUrl): risolvi lato server nel vero URL dello stream
+  // prima di avviare il download.
+  if (!params.sourceUrl && params.externalUrl) {
+    let resolved;
+    try {
+      resolved = await extractor.resolveExternalUrl(params.externalUrl);
+    } catch (e) {
+      return res.status(e.status || 502).json({ error: e.message });
+    }
+    params.sourceUrl = resolved.sourceUrl;
+    params.headers = { ...(params.headers || {}), ...(resolved.headers || {}) };
+  }
+
   let prepared;
   try {
     prepared = streamer.prepareDownload(params);
@@ -226,13 +240,17 @@ app.get('/stream/:type/:id.json', addonCors, asyncRoute(async (req, res) => {
   const result = downloadable.map(s => {
     const payload = {
       addonName: s.addonName,
-      sourceUrl: s.url,
+      sourceUrl: s.url || undefined,
+      externalUrl: s.externalUrl || undefined,
       headers: s.headers,
       streamTitle: s.title,
       title: label
     };
-    const streamType = streamer.detectType(s.url);
-    const ext = streamType === 'hls' ? '.mkv' : streamer.guessExtension(s.url);
+    // Per gli stream con solo externalUrl non conosciamo ancora il tipo: si risolvono
+    // in un .m3u8 (remux -> .mkv) nella quasi totalità dei casi.
+    const ext = s.url
+      ? (streamer.detectType(s.url) === 'hls' ? '.mkv' : streamer.guessExtension(s.url))
+      : '.mkv';
     const cosmeticFilename = encodeURIComponent(`${label}${ext}`);
     const downloadUrl = `${base}/api/download/${encodeDownloadPayload(payload)}/${cosmeticFilename}`;
     return {
