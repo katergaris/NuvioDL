@@ -11,8 +11,10 @@ const cfg = config.get();
 const APP_VERSION = '1.2.0';
 
 const app = express();
+app.set('etag', false);
 
 app.use((req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
   const start = Date.now();
   console.log(`--> ${req.method} ${req.originalUrl}`);
   res.on('finish', () => {
